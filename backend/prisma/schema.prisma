@@ -1,0 +1,246 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  ADMIN
+  MEMBER
+}
+
+enum ProfileType {
+  HUMAN
+  PET
+}
+
+enum ItemPriority {
+  LOW
+  MEDIUM
+  HIGH
+}
+
+enum ShoppingItemStatus {
+  PENDING
+  PICKED_UP
+  OUT_OF_STOCK
+  TOO_EXPENSIVE
+}
+
+model User {
+  id            String   @id @default(uuid())
+  email         String   @unique
+  fullName      String   @map("full_name")
+  passwordHash  String   @map("password_hash")
+  role          UserRole @default(MEMBER)
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  preferences       UserPreferences?
+  profiles          Profile[]
+  recommendations   Recommendation[]
+  mealPlans         MealPlan[]
+  shoppingLists     ShoppingList[]
+  shoppingHistories ShoppingHistory[]
+  shoppingSessions  ShoppingSession[]
+  priceSubmissions  PriceSubmission[]
+  refreshTokens     RefreshToken[]
+
+  @@map("users")
+}
+
+model RefreshToken {
+  id        String   @id @default(uuid())
+  token     String   @unique
+  userId    String   @map("user_id")
+  expiresAt DateTime @map("expires_at")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("refresh_tokens")
+}
+
+model UserPreferences {
+  id                    String  @id @default(uuid())
+  userId                String  @unique @map("user_id")
+  zipCode               String? @map("zip_code")
+  budget                Float?
+  currency              String  @default("USD")
+  theme                 String  @default("light")
+  firstVisitCompleted   Boolean @default(false) @map("first_visit_completed")
+  profilePictureUrl     String? @map("profile_picture_url")
+  householdType         String? @map("household_type")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("user_preferences")
+}
+
+model Profile {
+  id                  String      @id @default(uuid())
+  userId              String      @map("user_id")
+  name                String
+  type                ProfileType
+  petType             String?     @map("pet_type")
+  age                 Int?
+  weight              Float?
+  avatarUrl           String?     @map("avatar_url")
+  allergies           String[]    @default([])
+  intolerances        String[]    @default([])
+  dietaryRestrictions String[]    @default([]) @map("dietary_restrictions")
+  specialConditions   String[]    @default([]) @map("special_conditions")
+  foodPreferences     String[]    @default([]) @map("food_preferences")
+  foodDislikes        String[]    @default([]) @map("food_dislikes")
+  notes               String?
+  createdAt           DateTime    @default(now()) @map("created_at")
+  updatedAt           DateTime    @updatedAt @map("updated_at")
+
+  user            User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  recommendations Recommendation[]
+  mealPlans       MealPlan[]
+
+  @@map("profiles")
+}
+
+model Recommendation {
+  id           String   @id @default(uuid())
+  userId       String   @map("user_id")
+  profileId    String   @map("profile_id")
+  itemName     String   @map("item_name")
+  itemType     String   @map("item_type")
+  category     String
+  reason       String
+  ingredients  String[] @default([])
+  alternatives String[] @default([])
+  priceRange   String?  @map("price_range")
+  isFavorite   Boolean  @default(false) @map("is_favorite")
+  rating       Int?
+  nutrition    Json?
+  texture      String?
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  profile Profile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+
+  @@map("recommendations")
+}
+
+model MealPlan {
+  id               String   @id @default(uuid())
+  userId           String   @map("user_id")
+  profileId        String   @map("profile_id")
+  date             DateTime @db.Date
+  mealType         String   @map("meal_type")
+  mealName         String   @map("meal_name")
+  ingredients      String[] @default([])
+  preparationNotes String?  @map("preparation_notes")
+  calories         Int?
+  completed        Boolean  @default(false)
+  createdAt        DateTime @default(now()) @map("created_at")
+
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  profile Profile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+
+  @@map("meal_plans")
+}
+
+model ShoppingList {
+  id         String       @id @default(uuid())
+  userId     String       @map("user_id")
+  itemName   String       @map("item_name")
+  category   String?
+  quantity   String?
+  profileIds String[]     @default([]) @map("profile_ids")
+  checked    Boolean      @default(false)
+  priority   ItemPriority @default(MEDIUM)
+  notes      String?
+  createdAt  DateTime     @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("shopping_lists")
+}
+
+model ShoppingHistory {
+  id                 String   @id @default(uuid())
+  userId             String   @map("user_id")
+  storeName          String   @map("store_name")
+  storeLocation      String?  @map("store_location")
+  estimatedCost      Float?   @map("estimated_cost")
+  actualCost         Float?   @map("actual_cost")
+  shoppingDate       DateTime @map("shopping_date")
+  itemsPickedUp      Json?    @map("items_picked_up")
+  itemsOutOfStock    Json?    @map("items_out_of_stock")
+  itemsTooExpensive  Json?    @map("items_too_expensive")
+  secondaryStore     String?  @map("secondary_store")
+  secondaryStoreCost Float?   @map("secondary_store_cost")
+  receiptUrls        String[] @default([]) @map("receipt_urls")
+  notes              String?
+  createdAt          DateTime @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("shopping_histories")
+}
+
+model ShoppingSession {
+  id            String   @id @default(uuid())
+  userId        String   @map("user_id")
+  selectedStore Json?    @map("selected_store")
+  storeResults  Json?    @map("store_results")
+  itemStatuses  Json?    @map("item_statuses")
+  itemPrices    Json?    @map("item_prices")
+  sessionDate   DateTime @default(now()) @map("session_date")
+  completed     Boolean  @default(false)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("shopping_sessions")
+}
+
+model PriceSubmission {
+  id          String   @id @default(uuid())
+  userId      String   @map("user_id")
+  itemName    String   @map("item_name")
+  storeName   String   @map("store_name")
+  zipRegion   String   @map("zip_region")
+  actualPrice Float    @map("actual_price")
+  quantity    Int      @default(1)
+  unit        String?
+  submittedAt DateTime @default(now()) @map("submitted_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([itemName, storeName, zipRegion])
+  @@map("price_submissions")
+}
+
+model StoreItemAverage {
+  id              String   @id @default(uuid())
+  itemName        String   @map("item_name")
+  storeName       String   @map("store_name")
+  zipRegion       String   @map("zip_region")
+  avgPrice        Float    @map("avg_price")
+  submissionCount Int      @map("submission_count")
+  lastUpdated     DateTime @default(now()) @map("last_updated")
+
+  @@unique([itemName, storeName, zipRegion])
+  @@map("store_item_averages")
+}
+
+model AisleLocation {
+  id               String   @id @default(uuid())
+  itemName         String   @map("item_name")
+  storeName        String   @map("store_name")
+  aisleLocation    String   @map("aisle_location")
+  verifiedCount    Int      @default(1) @map("verified_count")
+  lastVerifiedDate DateTime @default(now()) @map("last_verified_date")
+  createdBy        String?  @map("created_by")
+
+  @@unique([itemName, storeName])
+  @@map("aisle_locations")
+}
