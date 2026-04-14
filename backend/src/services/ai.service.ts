@@ -41,14 +41,9 @@ export async function generateRecommendations(
   profile: ProfileContext,
   categories: string[]
 ): Promise<any[]> {
-  const response = await openai.chat.completions.create({
-    model: 'gpt-4o',
-    response_format: { type: 'json_object' },
-    messages: [
-      { role: 'system', content: SYSTEM_PROMPT },
-      {
-        role: 'user',
-        content: `Generate 8-12 food and product recommendations for the following profile and categories.
+  const isPet = profile.type === 'PET';
+
+  const humanPrompt = `Generate 8-12 food and product recommendations for the following profile and categories.
 
 ${buildProfileConstraints(profile)}
 
@@ -69,8 +64,45 @@ Return JSON with this structure:
       "texture": "string (describe texture/sensory profile, especially relevant for ARFID)"
     }
   ]
-}`,
-      },
+}`;
+
+  const petPrompt = `Generate 8-12 food and product recommendations for the following pet profile.
+
+${buildProfileConstraints(profile)}
+
+Categories requested: ${categories.join(', ')}
+
+IMPORTANT PET RULES:
+- For "brand" type: recommend specific commercial pet food brands with the full product name (e.g., "Purina Pro Plan Chicken & Rice Adult Dog Food - 30lb bag"). Include brand name, blend/flavor, and size.
+- For "food" type: recommend species-appropriate fresh/whole foods (e.g., "Cooked chicken breast", "Blueberries", "Sweet potato").
+- For "recipe" type: recommend homemade pet food recipes with ingredient lists.
+- Use category values: "kibble", "wet_food", "treats", "fresh_food", "supplement" instead of human meal categories.
+- For brand items, set ingredients to an EMPTY array [] since they are purchased as a whole product.
+- For food/recipe items, list individual ingredients.
+
+Return JSON with this structure:
+{
+  "recommendations": [
+    {
+      "itemName": "string (full product name for brands, food name for foods, recipe name for recipes)",
+      "itemType": "food" | "brand" | "recipe",
+      "category": "kibble" | "wet_food" | "treats" | "fresh_food" | "supplement",
+      "reason": "string (2-3 sentences explaining why this is good for this pet)",
+      "ingredients": ["string"],
+      "alternatives": ["string", "string"],
+      "priceRange": "$" | "$$" | "$$$",
+      "nutrition": { "calories": number, "protein": "string", "fiber": "string", "keyNutrients": ["string"] },
+      "texture": "string"
+    }
+  ]
+}`;
+
+  const response = await openai.chat.completions.create({
+    model: 'gpt-4o',
+    response_format: { type: 'json_object' },
+    messages: [
+      { role: 'system', content: SYSTEM_PROMPT },
+      { role: 'user', content: isPet ? petPrompt : humanPrompt },
     ],
     temperature: 0.7,
     max_tokens: 4000,

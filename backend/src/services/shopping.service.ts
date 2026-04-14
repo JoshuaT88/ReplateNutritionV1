@@ -1,4 +1,5 @@
 import prisma from '../config/database.js';
+import { Prisma } from '@prisma/client';
 import { AppError } from '../middleware/errorHandler.js';
 import * as aiService from './ai.service.js';
 
@@ -68,6 +69,13 @@ export async function generateFromMealPlans(userId: string, profileIds: string[]
   const allIngredients = meals.flatMap((m) => m.ingredients);
   if (allIngredients.length === 0) throw new AppError(400, 'No meals found for the selected period');
 
+  // Find the earliest meal date so we can auto-adjust priority
+  const earliestMealDate = meals.reduce((earliest, m) => {
+    const d = new Date(m.date);
+    return d < earliest ? d : earliest;
+  }, new Date(meals[0].date));
+  const priority = calculatePriorityFromDate(earliestMealDate.toISOString());
+
   const items = await aiService.generateShoppingListFromMeals(allIngredients);
 
   const created = [];
@@ -79,7 +87,8 @@ export async function generateFromMealPlans(userId: string, profileIds: string[]
         category: item.category,
         quantity: item.quantity,
         profileIds,
-        priority: 'MEDIUM',
+        priority,
+        sourceRef: `Meal plan (${days} day${days > 1 ? 's' : ''})`,
       },
     });
     created.push(saved);
@@ -128,7 +137,26 @@ export async function startShoppingSession(userId: string, storeName?: string) {
 
   if (items.length === 0) throw new AppError(400, 'Your shopping list is empty');
 
-  // Build initial item statuses and enrich with aisle hints
+  // Get user preferences for zip code
+  const prefs = await prisma.userPreferences.findUnique({ where: { userId } });
+  const zipRegion = prefs?.zipCode?.slice(0, 3) || '000';
+
+  // Fetch crowd-sourced price estimates if store is known
+  const priceMap: Record<string, number> = {};
+  if (storeName) {
+    const averages = await prisma.storeItemAverage.findMany({
+      where: {
+        zipRegion,
+        storeName,
+        itemName: { in: items.map((i) => i.itemName) },
+      },
+    });
+    for (const avg of averages) {
+      priceMap[avg.itemName] = avg.avgPrice;
+    }
+  }
+
+  // Build initial item statuses and enrich with aisle hints + price estimates
   const itemStatuses: Record<string, string> = {};
   const itemPrices: Record<string, number> = {};
   const sessionItems = [];
@@ -153,6 +181,8 @@ export async function startShoppingSession(userId: string, storeName?: string) {
       }
     }
 
+    const estimatedPrice = priceMap[item.itemName] || null;
+
     sessionItems.push({
       id: item.id,
       itemName: item.itemName,
@@ -160,15 +190,16 @@ export async function startShoppingSession(userId: string, storeName?: string) {
       quantity: item.quantity,
       priority: item.priority,
       notes: item.notes,
+      sourceRef: item.sourceRef,
       aisleHint,
-      estimatedPrice: null,
+      estimatedPrice,
     });
   }
 
   const session = await prisma.shoppingSession.create({
     data: {
       userId,
-      selectedStore: storeName ? { name: storeName } : null,
+      selectedStore: storeName ? { name: storeName } : Prisma.JsonNull,
       itemStatuses,
       itemPrices,
       sessionDate: new Date(),
@@ -193,6 +224,23 @@ export async function getShoppingSession(userId: string, sessionId: string) {
   const statuses = (session.itemStatuses as Record<string, string>) || {};
   const prices = (session.itemPrices as Record<string, number>) || {};
 
+  // Fetch price estimates
+  const prefs = await prisma.userPreferences.findUnique({ where: { userId } });
+  const zipRegion = prefs?.zipCode?.slice(0, 3) || '000';
+  const priceMap: Record<string, number> = {};
+  if (storeName) {
+    const averages = await prisma.storeItemAverage.findMany({
+      where: {
+        zipRegion,
+        storeName,
+        itemName: { in: items.map((i) => i.itemName) },
+      },
+    });
+    for (const avg of averages) {
+      priceMap[avg.itemName] = avg.avgPrice;
+    }
+  }
+
   const sessionItems = await Promise.all(
     items
       .filter((item) => statuses[item.id] !== undefined)
@@ -211,8 +259,9 @@ export async function getShoppingSession(userId: string, sessionId: string) {
           quantity: item.quantity,
           priority: item.priority,
           notes: item.notes,
+          sourceRef: item.sourceRef,
           aisleHint,
-          estimatedPrice: null,
+          estimatedPrice: priceMap[item.itemName] || null,
           actualPrice: prices[item.id] || null,
           status: statuses[item.id] || 'PENDING',
         };
@@ -349,4 +398,55 @@ export async function endShoppingSession(userId: string, sessionId: string) {
   }
 
   return history;
+}
+
+function calculatePriorityFromDate(mealDate: string | undefined): 'LOW' | 'MEDIUM' | 'HIGH' {
+  if (!mealDate) return 'MEDIUM';
+  const now = new Date();
+  const target = new Date(mealDate);
+  const diffDays = Math.ceil((target.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
+  if (diffDays <= 2) return 'HIGH';
+  if (diffDays <= 5) return 'MEDIUM';
+  return 'LOW';
+}
+
+export async function addIngredientsToList(
+  userId: string,
+  data: { ingredients: string[]; mealName: string; mealDate?: string; profileId?: string; category?: string }
+) {
+  if (!data.ingredients || data.ingredients.length === 0) {
+    throw new AppError(400, 'No ingredients provided');
+  }
+
+  const priority = calculatePriorityFromDate(data.mealDate);
+  const sourceRef = data.mealDate
+    ? `${data.mealName} (${new Date(data.mealDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })})`
+    : data.mealName;
+
+  const created = [];
+  for (const ingredient of data.ingredients) {
+    // Let AI assign proper grocery category instead of using meal category
+    let groceryCategory = 'Other';
+    try {
+      const validation = await aiService.validateGroceryItem(ingredient);
+      if (validation.suggestedCategory) groceryCategory = validation.suggestedCategory;
+    } catch {
+      // Skip AI if unavailable
+    }
+
+    const saved = await prisma.shoppingList.create({
+      data: {
+        userId,
+        itemName: ingredient,
+        category: groceryCategory,
+        profileIds: data.profileId ? [data.profileId] : [],
+        priority,
+        sourceRef,
+        notes: `For: ${data.mealName}`,
+      },
+    });
+    created.push(saved);
+  }
+
+  return created;
 }

@@ -3,7 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   History, ShoppingCart, MapPin, Clock, DollarSign, ChevronDown,
-  Check, X, AlertTriangle, TrendingUp, TrendingDown, Minus
+  Check, X, TrendingUp, TrendingDown, Minus
 } from 'lucide-react';
 import { api } from '@/lib/api';
 import { Badge } from '@/components/ui/badge';
@@ -22,7 +22,7 @@ export default function ShoppingHistoryPage() {
   const trips = history || [];
 
   // Summary stats
-  const totalSpent = trips.reduce((sum: number, t: any) => sum + (t.totalSpent || 0), 0);
+  const totalSpent = trips.reduce((sum: number, t: any) => sum + (t.actualCost || 0), 0);
   const totalTrips = trips.length;
   const avgPerTrip = totalTrips > 0 ? totalSpent / totalTrips : 0;
 
@@ -90,15 +90,15 @@ export default function ShoppingHistoryPage() {
 function TripCard({ trip }: { trip: any }) {
   const [expanded, setExpanded] = useState(false);
 
-  const pickedUp = trip.items?.filter((i: any) => i.status === 'PICKED_UP') || [];
-  const outOfStock = trip.items?.filter((i: any) => i.status === 'OUT_OF_STOCK') || [];
-  const tooExpensive = trip.items?.filter((i: any) => i.status === 'TOO_EXPENSIVE') || [];
-  const skipped = trip.items?.filter((i: any) => i.status === 'SKIPPED') || [];
-  const allItems = trip.items || [];
+  // Build unified items array from the separate JSON arrays
+  const pickedUp = ((trip.itemsPickedUp as any[]) || []).map((i: any) => ({ ...i, status: 'PICKED_UP' }));
+  const outOfStock = ((trip.itemsOutOfStock as any[]) || []).map((i: any) => ({ ...i, status: 'OUT_OF_STOCK' }));
+  const tooExpensive = ((trip.itemsTooExpensive as any[]) || []).map((i: any) => ({ ...i, status: 'TOO_EXPENSIVE' }));
+  const allItems = [...pickedUp, ...outOfStock, ...tooExpensive];
 
   const savingsEstimate = allItems.reduce((sum: number, i: any) => {
     if (i.actualPrice && i.estimatedPrice) {
-      return sum + ((i.estimatedPrice - i.actualPrice) * (i.quantity || 1));
+      return sum + ((i.estimatedPrice - i.actualPrice) * (parseInt(i.quantity) || 1));
     }
     return sum;
   }, 0);
@@ -118,15 +118,15 @@ function TripCard({ trip }: { trip: any }) {
               <h3 className="text-sm font-semibold truncate">
                 {trip.storeName || 'Shopping Trip'}
               </h3>
-              {trip.totalSpent > 0 && (
+              {trip.actualCost > 0 && (
                 <span className="text-sm font-bold text-primary shrink-0">
-                  {formatCurrency(trip.totalSpent)}
+                  {formatCurrency(trip.actualCost)}
                 </span>
               )}
             </div>
             <div className="flex items-center gap-3 text-[10px] text-muted">
               <span className="flex items-center gap-0.5">
-                <Clock className="h-3 w-3" /> {formatDate(trip.completedAt || trip.startedAt)}
+                <Clock className="h-3 w-3" /> {formatDate(trip.shoppingDate)}
               </span>
               {trip.storeName && (
                 <span className="flex items-center gap-0.5">
@@ -176,11 +176,6 @@ function TripCard({ trip }: { trip: any }) {
                     <DollarSign className="h-3 w-3 mr-0.5 text-amber-500" /> {tooExpensive.length} too expensive
                   </Badge>
                 )}
-                {skipped.length > 0 && (
-                  <Badge variant="outline" className="text-[10px]">
-                    <AlertTriangle className="h-3 w-3 mr-0.5 text-slate-400" /> {skipped.length} skipped
-                  </Badge>
-                )}
               </div>
 
               {/* Item list */}
@@ -202,7 +197,7 @@ function TripCard({ trip }: { trip: any }) {
 
                     <span className={cn('flex-1', item.status !== 'PICKED_UP' && 'line-through text-muted')}>
                       {item.itemName}
-                      {item.quantity > 1 && <span className="text-muted"> ×{item.quantity}</span>}
+                      {item.quantity && parseInt(item.quantity) > 1 && <span className="text-muted"> ×{item.quantity}</span>}
                     </span>
 
                     {item.actualPrice ? (
@@ -223,12 +218,6 @@ function TripCard({ trip }: { trip: any }) {
                   </div>
                 ))}
               </div>
-
-              {trip.duration && (
-                <p className="text-[10px] text-muted text-right">
-                  Duration: {Math.round(trip.duration / 60)} minutes
-                </p>
-              )}
             </div>
           </motion.div>
         )}

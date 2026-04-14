@@ -84,29 +84,29 @@ export default function SettingsPage() {
               <p className="text-xs text-muted">{user?.email}</p>
             </div>
           </div>
-          <SettingsRow label="Default ZIP Code" value={preferences?.defaultZip || 'Not set'}>
+          <SettingsRow label="Default ZIP Code" value={preferences?.zipCode || 'Not set'}>
             <Input
               placeholder="ZIP code"
-              defaultValue={preferences?.defaultZip || ''}
+              defaultValue={preferences?.zipCode || ''}
               className="w-32"
               maxLength={5}
               onBlur={(e) => {
-                if (e.target.value !== (preferences?.defaultZip || '')) {
-                  updatePreferencesMutation.mutate({ defaultZip: e.target.value });
+                if (e.target.value !== (preferences?.zipCode || '')) {
+                  updatePreferencesMutation.mutate({ zipCode: e.target.value });
                 }
               }}
             />
           </SettingsRow>
-          <SettingsRow label="Weekly Budget" value={preferences?.weeklyBudget ? `$${preferences.weeklyBudget}` : 'Not set'}>
+          <SettingsRow label="Weekly Budget" value={preferences?.budget ? `$${preferences.budget}` : 'Not set'}>
             <Input
               type="number"
               placeholder="150"
-              defaultValue={preferences?.weeklyBudget || ''}
+              defaultValue={preferences?.budget || ''}
               className="w-24"
               onBlur={(e) => {
                 const val = parseFloat(e.target.value);
-                if (!isNaN(val) && val !== preferences?.weeklyBudget) {
-                  updatePreferencesMutation.mutate({ weeklyBudget: val });
+                if (!isNaN(val) && val !== preferences?.budget) {
+                  updatePreferencesMutation.mutate({ budget: val });
                 }
               }}
             />

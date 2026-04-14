@@ -41,6 +41,13 @@ router.post('/generate-from-meals', async (req: AuthRequest, res: Response, next
   } catch (err) { next(err); }
 });
 
+router.post('/add-ingredients', async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const items = await shoppingService.addIngredientsToList(req.user!.userId, req.body);
+    res.status(201).json(items);
+  } catch (err) { next(err); }
+});
+
 router.post('/find-stores', async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     const { zipCode } = req.body;

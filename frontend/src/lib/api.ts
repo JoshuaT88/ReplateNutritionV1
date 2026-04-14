@@ -223,6 +223,9 @@ class ApiClient {
   addRecommendationToList(data: { itemName: string; category?: string; ingredients?: string[]; priority?: string; notes?: string }) {
     return this.request<ShoppingItem>('/shopping/list', { method: 'POST', body: JSON.stringify(data) });
   }
+  addIngredientsToList(data: { ingredients: string[]; mealName: string; mealDate?: string; profileId?: string; category?: string }) {
+    return this.request<ShoppingItem[]>('/shopping/add-ingredients', { method: 'POST', body: JSON.stringify(data) });
+  }
 
   // === Shopping History ===
   getShoppingHistory() { return this.request<ShoppingHistory[]>('/shopping/history'); }

@@ -41,6 +41,8 @@ export default function ShoppingSessionPage() {
   const [showPriceInput, setShowPriceInput] = useState<string | null>(null);
   const [priceValue, setPriceValue] = useState('');
   const [showEndConfirm, setShowEndConfirm] = useState(false);
+  const [showReview, setShowReview] = useState(false);
+  const [reviewPrices, setReviewPrices] = useState<Record<string, string>>({});
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
 
   useEffect(() => {
@@ -85,7 +87,7 @@ export default function ShoppingSessionPage() {
   const pending = items.filter((i: any) => i.status === 'PENDING');
   const skipped = items.filter((i: any) => ['OUT_OF_STOCK', 'SKIPPED', 'TOO_EXPENSIVE'].includes(i.status));
 
-  const runningTotal = pickedUp.reduce((sum: number, i: any) => sum + (i.actualPrice || i.estimatedPrice || 0) * (i.quantity || 1), 0);
+  const runningTotal = pickedUp.reduce((sum: number, i: any) => sum + (i.actualPrice || i.estimatedPrice || 0) * (parseInt(i.quantity) || 1), 0);
   const progress = items.length > 0 ? ((items.length - pending.length) / items.length) * 100 : 0;
 
   const formatTime = (seconds: number) => {
@@ -169,21 +171,170 @@ export default function ShoppingSessionPage() {
         </div>
       ))}
 
-      {pending.length === 0 && (
+      {pending.length === 0 && !showReview && (
         <div className="text-center py-12">
           <ShoppingCart className="h-12 w-12 text-primary mx-auto mb-3" />
           <h2 className="text-lg font-semibold mb-1">All items processed!</h2>
           <p className="text-sm text-muted mb-4">
             {pickedUp.length} picked up · {skipped.length} skipped
           </p>
-          <Button onClick={() => endSessionMutation.mutate()}>
-            Finish Shopping
+          <Button onClick={() => {
+            // Pre-fill review prices from actual or estimated
+            const initPrices: Record<string, string> = {};
+            pickedUp.forEach((i: any) => {
+              initPrices[i.id] = (i.actualPrice || i.estimatedPrice || '').toString();
+            });
+            setReviewPrices(initPrices);
+            setShowReview(true);
+          }}>
+            Review & Finish
+          </Button>
+        </div>
+      )}
+
+      {/* Final Review & Cost Confirmation */}
+      {showReview && (
+        <div className="space-y-4">
+          <div className="flex items-center justify-between">
+            <h2 className="text-lg font-semibold">Review & Confirm</h2>
+            <Button size="sm" variant="outline" onClick={() => setShowReview(false)}>
+              Back
+            </Button>
+          </div>
+          <p className="text-sm text-muted">Confirm prices for each item before finishing. Edit any price that's wrong.</p>
+
+          {/* Picked Up Items with editable prices */}
+          <div className="space-y-2">
+            <p className="text-[10px] uppercase tracking-wider font-semibold text-emerald-600 px-1">
+              Picked Up ({pickedUp.length})
+            </p>
+            {pickedUp.map((item: any) => {
+              const priceStr = reviewPrices[item.id] || '';
+              const priceNum = parseFloat(priceStr);
+              const qty = parseInt(item.quantity) || 1;
+              return (
+                <Card key={item.id}>
+                  <CardContent className="p-3">
+                    <div className="flex items-center gap-3">
+                      <Check className="h-4 w-4 text-emerald-600 shrink-0" />
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-medium">{item.itemName}</p>
+                        <div className="flex items-center gap-2 text-[10px] text-muted mt-0.5">
+                          <span>Qty: {qty}</span>
+                          {item.aisleHint && item.aisleHint !== 'Unknown' && (
+                            <span className="flex items-center gap-0.5 text-blue-600">
+                              <MapPin className="h-3 w-3" /> {item.aisleHint}
+                            </span>
+                          )}
+                          {item.estimatedPrice && (
+                            <span className="text-muted">Est: {formatCurrency(item.estimatedPrice)}</span>
+                          )}
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-1 shrink-0">
+                        <span className="text-xs text-muted">$</span>
+                        <Input
+                          type="number"
+                          step="0.01"
+                          min="0"
+                          value={priceStr}
+                          onChange={(e) => setReviewPrices((p) => ({ ...p, [item.id]: e.target.value }))}
+                          className="w-20 h-8 text-sm font-mono text-right"
+                          placeholder="0.00"
+                        />
+                      </div>
+                    </div>
+                    {!isNaN(priceNum) && qty > 1 && (
+                      <p className="text-[10px] text-muted text-right mt-1">
+                        Subtotal: {formatCurrency(priceNum * qty)}
+                      </p>
+                    )}
+                  </CardContent>
+                </Card>
+              );
+            })}
+          </div>
+
+          {/* Unavailable / Skipped summary */}
+          {skipped.length > 0 && (
+            <div className="space-y-2">
+              <p className="text-[10px] uppercase tracking-wider font-semibold text-slate-400 px-1">
+                Unavailable / Skipped ({skipped.length})
+              </p>
+              {skipped.map((item: any) => (
+                <div key={item.id} className="flex items-center gap-3 px-4 py-2.5 rounded-xl border bg-slate-50 border-slate-200">
+                  <X className="h-3.5 w-3.5 text-slate-400 shrink-0" />
+                  <span className="text-sm text-muted line-through flex-1">{item.itemName}</span>
+                  <Badge variant="outline" className="text-[9px]">{STATUS_LABELS[item.status as ItemStatus]}</Badge>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Cost Summary */}
+          <Card className="border-primary/30 bg-primary/5">
+            <CardContent className="p-4 space-y-2">
+              <div className="flex justify-between text-sm">
+                <span className="text-muted">Items picked up</span>
+                <span className="font-medium">{pickedUp.length}</span>
+              </div>
+              <div className="flex justify-between text-sm">
+                <span className="text-muted">Items unavailable</span>
+                <span className="font-medium">{skipped.length}</span>
+              </div>
+              {(() => {
+                const estimatedTotal = pickedUp.reduce((sum: number, i: any) => {
+                  return sum + (i.estimatedPrice || 0) * (parseInt(i.quantity) || 1);
+                }, 0);
+                const confirmedTotal = pickedUp.reduce((sum: number, i: any) => {
+                  const p = parseFloat(reviewPrices[i.id] || '0');
+                  return sum + (isNaN(p) ? 0 : p) * (parseInt(i.quantity) || 1);
+                }, 0);
+                const diff = confirmedTotal - estimatedTotal;
+                return (
+                  <>
+                    {estimatedTotal > 0 && (
+                      <div className="flex justify-between text-sm">
+                        <span className="text-muted">Estimated total</span>
+                        <span className="font-mono">{formatCurrency(estimatedTotal)}</span>
+                      </div>
+                    )}
+                    <div className="flex justify-between text-base font-bold pt-2 border-t border-primary/20">
+                      <span>Confirmed Total</span>
+                      <span className="text-primary">{formatCurrency(confirmedTotal)}</span>
+                    </div>
+                    {estimatedTotal > 0 && diff !== 0 && (
+                      <p className={cn('text-[10px] text-right', diff > 0 ? 'text-red-500' : 'text-emerald-600')}>
+                        {diff > 0 ? '+' : ''}{formatCurrency(diff)} vs estimate
+                      </p>
+                    )}
+                  </>
+                );
+              })()}
+            </CardContent>
+          </Card>
+
+          <Button
+            className="w-full"
+            onClick={async () => {
+              // Submit all confirmed prices before ending session
+              for (const [itemId, priceStr] of Object.entries(reviewPrices)) {
+                const price = parseFloat(priceStr);
+                if (!isNaN(price) && price > 0) {
+                  await api.submitSessionPrice(sessionId!, itemId, price);
+                }
+              }
+              endSessionMutation.mutate();
+            }}
+            disabled={endSessionMutation.isPending}
+          >
+            {endSessionMutation.isPending ? <><Loader2 className="h-4 w-4 animate-spin" /> Saving...</> : 'Confirm & Finish Shopping'}
           </Button>
         </div>
       )}
 
       {/* Picked up (collapsible) */}
-      {pickedUp.length > 0 && (
+      {pickedUp.length > 0 && !showReview && (
         <div className="space-y-2">
           <p className="text-[10px] uppercase tracking-wider font-semibold text-emerald-600 px-1">
             Picked Up ({pickedUp.length})
@@ -196,23 +347,39 @@ export default function ShoppingSessionPage() {
               <Check className="h-4 w-4 text-emerald-600 shrink-0" />
               <div className="flex-1 min-w-0">
                 <p className="text-sm font-medium line-through text-emerald-800">{item.itemName}</p>
+                <div className="flex items-center gap-2 text-[10px] text-muted mt-0.5">
+                  {item.aisleHint && item.aisleHint !== 'Unknown' && (
+                    <span className="text-blue-600">{item.aisleHint}</span>
+                  )}
+                </div>
               </div>
-              {item.actualPrice && (
-                <span className="text-xs font-mono text-emerald-700">{formatCurrency(item.actualPrice)}</span>
-              )}
-              <button
-                onClick={() => updateStatusMutation.mutate({ itemId: item.id, status: 'PENDING' })}
-                className="text-[10px] text-muted hover:text-foreground"
-              >
-                <RefreshCw className="h-3.5 w-3.5" />
-              </button>
+              <div className="flex items-center gap-2 shrink-0">
+                {item.actualPrice ? (
+                  <span className="text-xs font-mono text-emerald-700">{formatCurrency(item.actualPrice)}</span>
+                ) : item.estimatedPrice ? (
+                  <span className="text-xs font-mono text-muted">~{formatCurrency(item.estimatedPrice)}</span>
+                ) : (
+                  <button
+                    onClick={() => { setShowPriceInput(item.id); setPriceValue(''); }}
+                    className="text-[10px] text-primary underline"
+                  >
+                    Add price
+                  </button>
+                )}
+                <button
+                  onClick={() => updateStatusMutation.mutate({ itemId: item.id, status: 'PENDING' })}
+                  className="text-[10px] text-muted hover:text-foreground"
+                >
+                  <RefreshCw className="h-3.5 w-3.5" />
+                </button>
+              </div>
             </div>
           ))}
         </div>
       )}
 
       {/* Skipped (collapsible) */}
-      {skipped.length > 0 && (
+      {skipped.length > 0 && !showReview && (
         <div className="space-y-2">
           <p className="text-[10px] uppercase tracking-wider font-semibold text-slate-400 px-1">
             Skipped / Unavailable ({skipped.length})
@@ -282,12 +449,26 @@ export default function ShoppingSessionPage() {
             <DialogTitle>End Shopping Session?</DialogTitle>
           </DialogHeader>
           <p className="text-sm text-muted my-4">
-            You have {pending.length} items still pending. Are you sure you want to end this session?
+            {pending.length > 0
+              ? `You have ${pending.length} items still pending. Ending now will skip remaining items.`
+              : 'Ready to review your items and confirm prices?'}
           </p>
           <DialogFooter>
             <Button variant="outline" onClick={() => setShowEndConfirm(false)}>Continue Shopping</Button>
-            <Button variant="destructive" onClick={() => endSessionMutation.mutate()} disabled={endSessionMutation.isPending}>
-              End Session
+            <Button
+              variant={pending.length > 0 ? 'destructive' : 'default'}
+              onClick={() => {
+                setShowEndConfirm(false);
+                // Pre-fill review prices
+                const initPrices: Record<string, string> = {};
+                pickedUp.forEach((i: any) => {
+                  initPrices[i.id] = (i.actualPrice || i.estimatedPrice || '').toString();
+                });
+                setReviewPrices(initPrices);
+                setShowReview(true);
+              }}
+            >
+              Review & Finish
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -325,19 +506,30 @@ function SessionItemCard({ item, onPickUp, onOutOfStock, onSkip, onTooExpensive 
             <div className="flex items-center gap-2 mt-0.5 text-[10px] text-muted">
               <span>Qty: {item.quantity || 1}</span>
               {item.unit && <span>· {item.unit}</span>}
-              {item.estimatedPrice && (
-                <span className="flex items-center gap-0.5 font-mono">
-                  <DollarSign className="h-3 w-3" /> ~{formatCurrency(item.estimatedPrice)}
-                </span>
-              )}
             </div>
-            {item.aisleHint && (
-              <p className="text-[10px] text-muted mt-0.5 flex items-center gap-0.5">
-                <MapPin className="h-3 w-3" /> {item.aisleHint}
-              </p>
+            {item.sourceRef && (
+              <p className="text-[10px] text-primary mt-0.5 font-medium">🍽 {item.sourceRef}</p>
+            )}
+          </div>
+          <div className="text-right shrink-0">
+            {item.estimatedPrice ? (
+              <div>
+                <p className="text-xs font-mono font-semibold text-foreground">{formatCurrency(item.estimatedPrice)}</p>
+                <p className="text-[9px] text-muted">est. price</p>
+              </div>
+            ) : (
+              <p className="text-[10px] text-muted italic">No price data</p>
             )}
           </div>
         </div>
+
+        {/* Aisle info - prominent */}
+        {item.aisleHint && item.aisleHint !== 'Unknown' && (
+          <div className="mt-2 px-2.5 py-1.5 rounded-lg bg-blue-50 border border-blue-100 flex items-center gap-1.5">
+            <MapPin className="h-3.5 w-3.5 text-blue-600 shrink-0" />
+            <span className="text-xs font-medium text-blue-800">{item.aisleHint}</span>
+          </div>
+        )}
 
         {/* Action buttons — large touch targets for mobile */}
         <div className="grid grid-cols-4 gap-2 mt-3">

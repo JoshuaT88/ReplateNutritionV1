@@ -120,6 +120,7 @@ export interface ShoppingItem {
   checked: boolean;
   priority: ItemPriority;
   notes: string | null;
+  sourceRef: string | null;
   createdAt: string;
 }
 

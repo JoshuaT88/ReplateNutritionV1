@@ -7,8 +7,8 @@ export async function getMealPlans(userId: string, profileId?: string, startDate
   if (profileId) where.profileId = profileId;
   if (startDate || endDate) {
     where.date = {};
-    if (startDate) where.date.gte = new Date(startDate);
-    if (endDate) where.date.lte = new Date(endDate);
+    if (startDate) where.date.gte = new Date(startDate + 'T00:00:00');
+    if (endDate) where.date.lte = new Date(endDate + 'T23:59:59');
   }
 
   return prisma.mealPlan.findMany({
@@ -20,7 +20,7 @@ export async function getMealPlans(userId: string, profileId?: string, startDate
 
 export async function createMealPlan(userId: string, data: any) {
   return prisma.mealPlan.create({
-    data: { ...data, userId, date: new Date(data.date) },
+    data: { ...data, userId, date: new Date(data.date + 'T12:00:00') },
   });
 }
 
@@ -77,7 +77,7 @@ export async function generateMealPlan(
       data: {
         userId,
         profileId: profile.id,
-        date: new Date(date),
+        date: new Date(date + 'T12:00:00'),
         mealType: meal.mealType,
         mealName: meal.mealName,
         ingredients: meal.ingredients || [],

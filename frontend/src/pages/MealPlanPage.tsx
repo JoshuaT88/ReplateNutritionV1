@@ -61,12 +61,13 @@ export default function MealPlanPage() {
   const [selectedProfiles, setSelectedProfiles] = useState<string[]>([]);
 
   const dates = useMemo(() => getWeekDates(baseDate, view), [baseDate, view]);
-  const startStr = dates[0]?.toISOString().split('T')[0] || '';
-  const endStr = dates[dates.length - 1]?.toISOString().split('T')[0] || '';
+  const toLocalDateStr = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  const startStr = dates[0] ? toLocalDateStr(dates[0]) : '';
+  const endStr = dates[dates.length - 1] ? toLocalDateStr(dates[dates.length - 1]) : '';
 
   const { data: mealPlans, isLoading, error, refetch } = useQuery({
     queryKey: ['mealPlans', startStr, endStr],
-    queryFn: () => api.getMealPlans(startStr, endStr),
+    queryFn: () => api.getMealPlans({ startDate: startStr, endDate: endStr }),
     enabled: !!startStr,
   });
 
@@ -76,7 +77,11 @@ export default function MealPlanPage() {
   });
 
   const generateMutation = useMutation({
-    mutationFn: () => api.generateMealPlan(selectedProfiles, generateDays),
+    mutationFn: () => {
+      const startDate = toLocalDateStr(new Date());
+      const mealTypes = ['breakfast', 'lunch', 'dinner', 'snack'];
+      return api.generateMealPlan(selectedProfiles, startDate, mealTypes);
+    },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['mealPlans'] });
       toast('success', 'Meal plan generated!');
@@ -346,7 +351,7 @@ function DayRow({ date, meals, isToday, onToggle, onDelete }: {
                             {meal.completed && <Check className="h-3 w-3 text-white" />}
                           </button>
                           <div className="flex-1 min-w-0">
-                            <p className={cn('text-sm font-medium', meal.completed && 'line-through')}>{meal.recipeName}</p>
+                            <p className={cn('text-sm font-medium', meal.completed && 'line-through')}>{meal.mealName}</p>
                             {meal.servings && (
                               <div className="flex items-center gap-2 mt-0.5 text-[10px] text-muted">
                                 <span className="flex items-center gap-0.5"><Users className="h-3 w-3" /> {meal.servings} servings</span>
@@ -395,7 +400,7 @@ function MonthCell({ date, meals, isToday }: { date: Date; meals: MealPlan[]; is
             key={meal.id}
             className={cn('text-[9px] px-1.5 py-0.5 rounded truncate', MEAL_COLORS[meal.mealType] || 'bg-slate-50')}
           >
-            {meal.recipeName}
+            {meal.mealName}
           </div>
         ))}
         {meals.length > 3 && (

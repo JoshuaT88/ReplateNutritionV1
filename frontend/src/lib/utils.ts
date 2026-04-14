@@ -16,8 +16,10 @@ export function formatCurrency(amount: number, currency: string = 'USD'): string
   return new Intl.NumberFormat('en-US', { style: 'currency', currency }).format(amount);
 }
 
-export function formatDate(date: string | Date, style: 'short' | 'long' = 'short'): string {
+export function formatDate(date: string | Date | null | undefined, style: 'short' | 'long' = 'short'): string {
+  if (!date) return 'N/A';
   const d = typeof date === 'string' ? new Date(date) : date;
+  if (isNaN(d.getTime())) return 'N/A';
   if (style === 'long') {
     return d.toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
   }

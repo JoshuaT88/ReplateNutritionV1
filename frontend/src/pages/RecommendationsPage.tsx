@@ -17,6 +17,8 @@ import { cn } from '@/lib/utils';
 import type { Recommendation } from '@/types';
 
 const CATEGORIES = ['breakfast', 'lunch', 'dinner', 'snack', 'beverage', 'dessert'];
+const PET_CATEGORIES = ['kibble', 'wet_food', 'treats', 'fresh_food', 'supplement'];
+const PET_MEAL_TYPES = ['morning_feed', 'evening_feed', 'treat_time'];
 
 export default function RecommendationsPage() {
   const queryClient = useQueryClient();
@@ -25,6 +27,9 @@ export default function RecommendationsPage() {
   const [selectedProfiles, setSelectedProfiles] = useState<string[]>([]);
   const [selectedCategories, setSelectedCategories] = useState<string[]>([]);
   const [search, setSearch] = useState('');
+  const [mealPlanRec, setMealPlanRec] = useState<Recommendation | null>(null);
+  const [mealPlanDate, setMealPlanDate] = useState(() => new Date().toISOString().split('T')[0]);
+  const [mealPlanType, setMealPlanType] = useState<string>('');
 
   const { data: recommendations, isLoading, error, refetch } = useQuery({
     queryKey: ['recommendations'],
@@ -61,36 +66,64 @@ export default function RecommendationsPage() {
   });
 
   const addToListMutation = useMutation({
-    mutationFn: (rec: Recommendation) => api.addRecommendationToList({
-      itemName: rec.itemName,
-      category: rec.category,
-      ingredients: rec.ingredients,
-      priority: 'MEDIUM',
-      notes: rec.itemType === 'recipe' ? `Recipe: ${rec.ingredients.join(', ')}` : undefined,
-    }),
-    onSuccess: () => {
+    mutationFn: (rec: Recommendation) => {
+      const isPet = rec.profile?.type === 'PET';
+      const isBrandKibble = isPet && rec.itemType === 'brand';
+
+      // Pet brand/kibble: add as a single product item
+      if (isBrandKibble || !rec.ingredients || rec.ingredients.length === 0) {
+        return api.addShoppingItem({
+          itemName: rec.itemName,
+          priority: 'MEDIUM',
+          notes: rec.reason,
+        }).then((item) => [item]);
+      }
+
+      // Fresh food / recipes: add individual ingredients
+      return api.addIngredientsToList({
+        ingredients: rec.ingredients,
+        mealName: rec.itemName,
+        profileId: rec.profileId,
+      });
+    },
+    onSuccess: (_data, rec) => {
       queryClient.invalidateQueries({ queryKey: ['shoppingList'] });
-      toast('success', 'Added to shopping list!');
+      const isPetBrand = rec.profile?.type === 'PET' && rec.itemType === 'brand';
+      if (isPetBrand) {
+        toast('success', `Added "${rec.itemName}" to shopping list!`);
+      } else {
+        const count = rec.ingredients?.length || 1;
+        toast('success', `Added ${count} ingredient${count > 1 ? 's' : ''} to shopping list!`);
+      }
     },
     onError: (err: Error) => toast('error', 'Failed to add', err.message),
   });
 
   const addToMealPlanMutation = useMutation({
-    mutationFn: (rec: Recommendation) => api.createMealPlan({
-      profileId: rec.profileId,
-      date: new Date().toISOString().split('T')[0],
-      mealType: rec.category as any,
-      mealName: rec.itemName,
-      ingredients: rec.ingredients,
-      preparationNotes: rec.reason,
-      calories: rec.nutrition?.calories || null,
-    }),
+    mutationFn: ({ rec, date, mealType }: { rec: Recommendation; date: string; mealType: string }) =>
+      api.createMealPlan({
+        profileId: rec.profileId,
+        date,
+        mealType: mealType as any,
+        mealName: rec.itemName,
+        ingredients: rec.ingredients,
+        preparationNotes: rec.reason,
+        calories: rec.nutrition?.calories || null,
+      }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['mealPlans'] });
       toast('success', 'Added to meal plan!');
+      setMealPlanRec(null);
     },
     onError: (err: Error) => toast('error', 'Failed to add to meal plan', err.message),
   });
+
+  const openMealPlanDialog = (rec: Recommendation) => {
+    setMealPlanRec(rec);
+    setMealPlanDate(new Date().toISOString().split('T')[0]);
+    const isPet = rec.profile?.type === 'PET';
+    setMealPlanType(isPet ? 'morning_feed' : (rec.category || 'dinner'));
+  };
 
   const filtered = recommendations?.filter((r) =>
     r.itemName.toLowerCase().includes(search.toLowerCase()) ||
@@ -156,7 +189,7 @@ export default function RecommendationsPage() {
                       onFavorite={() => favoriteMutation.mutate({ id: rec.id, isFavorite: !rec.isFavorite })}
                       onDelete={() => deleteMutation.mutate(rec.id)}
                       onAddToList={() => addToListMutation.mutate(rec)}
-                      onAddToMealPlan={() => addToMealPlanMutation.mutate(rec)}
+                      onAddToMealPlan={() => openMealPlanDialog(rec)}
                       isAddingToList={addToListMutation.isPending}
                       isAddingToMealPlan={addToMealPlanMutation.isPending}
                     />
@@ -207,22 +240,31 @@ export default function RecommendationsPage() {
             <div>
               <p className="text-sm font-medium mb-2">Meal categories</p>
               <div className="flex flex-wrap gap-2">
-                {CATEGORIES.map((cat) => (
-                  <button
-                    key={cat}
-                    onClick={() => setSelectedCategories((s) =>
-                      s.includes(cat) ? s.filter((x) => x !== cat) : [...s, cat]
-                    )}
-                    className={cn(
-                      'px-3 py-1.5 rounded-xl text-sm font-medium border-2 transition-all capitalize',
-                      selectedCategories.includes(cat)
-                        ? 'border-primary bg-primary/10 text-primary'
-                        : 'border-card-border text-muted hover:border-slate-300'
-                    )}
-                  >
-                    {cat}
-                  </button>
-                ))}
+                {(() => {
+                  const selectedProfileObjs = profiles?.filter((p) => selectedProfiles.includes(p.id)) || [];
+                  const hasPets = selectedProfileObjs.some((p) => p.type === 'PET');
+                  const hasHumans = selectedProfileObjs.some((p) => p.type === 'HUMAN');
+                  const cats = [
+                    ...(hasHumans || selectedProfiles.length === 0 ? CATEGORIES : []),
+                    ...(hasPets ? PET_CATEGORIES : []),
+                  ];
+                  return cats.map((cat) => (
+                    <button
+                      key={cat}
+                      onClick={() => setSelectedCategories((s) =>
+                        s.includes(cat) ? s.filter((x) => x !== cat) : [...s, cat]
+                      )}
+                      className={cn(
+                        'px-3 py-1.5 rounded-xl text-sm font-medium border-2 transition-all capitalize',
+                        selectedCategories.includes(cat)
+                          ? 'border-primary bg-primary/10 text-primary'
+                          : 'border-card-border text-muted hover:border-slate-300'
+                      )}
+                    >
+                      {cat.replace('_', ' ')}
+                    </button>
+                  ));
+                })()}
               </div>
             </div>
           </div>
@@ -233,6 +275,60 @@ export default function RecommendationsPage() {
               disabled={generateMutation.isPending || selectedProfiles.length === 0 || selectedCategories.length === 0}
             >
               {generateMutation.isPending ? <><Loader2 className="h-4 w-4 animate-spin" /> Generating...</> : 'Generate'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Meal Plan Date/Type Picker Dialog */}
+      <Dialog open={!!mealPlanRec} onOpenChange={(open) => !open && setMealPlanRec(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Add to Meal Plan</DialogTitle>
+          </DialogHeader>
+          {mealPlanRec && (
+            <div className="space-y-4 my-4">
+              <p className="text-sm text-muted">
+                Schedule <span className="font-semibold text-foreground">{mealPlanRec.itemName}</span> for a meal.
+              </p>
+              <div>
+                <label className="text-sm font-medium mb-1.5 block">Date</label>
+                <input
+                  type="date"
+                  value={mealPlanDate}
+                  onChange={(e) => setMealPlanDate(e.target.value)}
+                  min={new Date().toISOString().split('T')[0]}
+                  className="flex h-10 w-full rounded-xl border border-card-border bg-white px-3 py-2 text-sm transition-colors focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary"
+                />
+              </div>
+              <div>
+                <label className="text-sm font-medium mb-1.5 block">Meal type</label>
+                <div className="flex flex-wrap gap-2">
+                  {(mealPlanRec.profile?.type === 'PET' ? PET_MEAL_TYPES : CATEGORIES).map((cat) => (
+                    <button
+                      key={cat}
+                      onClick={() => setMealPlanType(cat)}
+                      className={cn(
+                        'px-3 py-1.5 rounded-xl text-sm font-medium border-2 transition-all capitalize',
+                        mealPlanType === cat
+                          ? 'border-primary bg-primary/10 text-primary'
+                          : 'border-card-border text-muted hover:border-slate-300'
+                      )}
+                    >
+                      {cat.replace('_', ' ')}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setMealPlanRec(null)}>Cancel</Button>
+            <Button
+              onClick={() => mealPlanRec && addToMealPlanMutation.mutate({ rec: mealPlanRec, date: mealPlanDate, mealType: mealPlanType })}
+              disabled={addToMealPlanMutation.isPending || !mealPlanDate || !mealPlanType}
+            >
+              {addToMealPlanMutation.isPending ? <><Loader2 className="h-4 w-4 animate-spin" /> Adding...</> : <><CalendarDays className="h-4 w-4" /> Add to Plan</>}
             </Button>
           </DialogFooter>
         </DialogContent>

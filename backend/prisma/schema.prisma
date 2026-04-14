@@ -158,6 +158,7 @@ model ShoppingList {
   checked    Boolean      @default(false)
   priority   ItemPriority @default(MEDIUM)
   notes      String?
+  sourceRef  String?      @map("source_ref")
   createdAt  DateTime     @default(now()) @map("created_at")
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)

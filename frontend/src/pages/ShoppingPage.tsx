@@ -32,6 +32,7 @@ export default function ShoppingPage() {
   const [showAddItem, setShowAddItem] = useState(false);
   const [showGenerateFromMeals, setShowGenerateFromMeals] = useState(false);
   const [showStoreFinder, setShowStoreFinder] = useState(false);
+  const [selectedStoreIdx, setSelectedStoreIdx] = useState<number | null>(null);
   const [newItemName, setNewItemName] = useState('');
   const [newItemQty, setNewItemQty] = useState('1');
   const [newItemCategory, setNewItemCategory] = useState('');
@@ -280,8 +281,8 @@ export default function ShoppingPage() {
       </Dialog>
 
       {/* Store Finder Dialog */}
-      <Dialog open={showStoreFinder} onOpenChange={setShowStoreFinder}>
-        <DialogContent className="max-w-lg">
+      <Dialog open={showStoreFinder} onOpenChange={(open) => { setShowStoreFinder(open); if (!open) setSelectedStoreIdx(null); }}>
+        <DialogContent className="max-w-lg max-h-[80vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Find Nearby Stores</DialogTitle>
           </DialogHeader>
@@ -290,7 +291,7 @@ export default function ShoppingPage() {
               <Input
                 placeholder="Enter ZIP code"
                 value={zipCode}
-                onChange={(e) => setZipCode(e.target.value.replace(/\D/g, '').slice(0, 5))}
+                onChange={(e) => { setZipCode(e.target.value.replace(/\D/g, '').slice(0, 5)); setSelectedStoreIdx(null); }}
                 maxLength={5}
                 className="flex-1"
               />
@@ -298,24 +299,86 @@ export default function ShoppingPage() {
             </div>
 
             {stores && stores.length > 0 && (
-              <div className="space-y-2 max-h-60 overflow-y-auto">
-                {stores.map((store: any) => (
-                  <button
-                    key={store.placeId}
-                    onClick={() => {
-                      startSessionMutation.mutate(store.name);
-                      setShowStoreFinder(false);
-                    }}
-                    className="w-full text-left p-3 rounded-xl border border-card-border hover:border-primary/30 hover:bg-primary/5 transition-all"
-                  >
-                    <p className="text-sm font-medium">{store.name}</p>
-                    <p className="text-xs text-muted flex items-center gap-1 mt-0.5">
-                      <MapPin className="h-3 w-3" /> {store.address}
-                    </p>
-                    {store.distance && (
-                      <p className="text-[10px] text-muted mt-0.5">{store.distance} away</p>
-                    )}
-                  </button>
+              <div className="space-y-2">
+                {stores.map((store: any, idx: number) => (
+                  <div key={store.placeId || store.name} className="rounded-xl border border-card-border overflow-hidden">
+                    <button
+                      onClick={() => setSelectedStoreIdx(selectedStoreIdx === idx ? null : idx)}
+                      className={cn(
+                        'w-full text-left p-3 transition-all',
+                        selectedStoreIdx === idx ? 'bg-primary/5 border-b border-card-border' : 'hover:bg-primary/5'
+                      )}
+                    >
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <p className="text-sm font-medium">{store.name}</p>
+                          <p className="text-xs text-muted flex items-center gap-1 mt-0.5">
+                            <MapPin className="h-3 w-3" /> {store.address}
+                          </p>
+                          {store.distance && (
+                            <p className="text-[10px] text-muted mt-0.5">{store.distance} away</p>
+                          )}
+                        </div>
+                        <div className="text-right shrink-0 ml-3">
+                          {store.estimatedTotal && (
+                            <p className="text-sm font-semibold text-primary">{formatCurrency(store.estimatedTotal)}</p>
+                          )}
+                          <p className="text-[10px] text-muted">est. total</p>
+                        </div>
+                      </div>
+                    </button>
+
+                    {/* Expanded per-item cost breakdown */}
+                    <AnimatePresence>
+                      {selectedStoreIdx === idx && store.itemPrices && store.itemPrices.length > 0 && (
+                        <motion.div
+                          initial={{ height: 0, opacity: 0 }}
+                          animate={{ height: 'auto', opacity: 1 }}
+                          exit={{ height: 0, opacity: 0 }}
+                          className="overflow-hidden"
+                        >
+                          <div className="px-3 pb-3 space-y-1">
+                            <p className="text-[10px] uppercase tracking-wider font-semibold text-muted mb-1.5">
+                              Estimated Prices ({store.itemPrices.length} items)
+                            </p>
+                            {store.itemPrices.map((ip: any) => (
+                              <div key={ip.itemName} className="flex items-center justify-between text-xs py-1 border-b border-slate-100 last:border-0">
+                                <div className="flex-1 min-w-0">
+                                  <span className="truncate block">{ip.itemName}</span>
+                                  {ip.quantity > 1 && <span className="text-[10px] text-muted">x{ip.quantity}</span>}
+                                </div>
+                                <div className="flex items-center gap-2 shrink-0 ml-2">
+                                  <span className="font-mono">{formatCurrency(ip.subtotal || ip.unitPrice)}</span>
+                                  {ip.confidence === 'crowd_sourced' && (
+                                    <Badge variant="secondary" className="text-[8px] px-1 py-0">verified</Badge>
+                                  )}
+                                </div>
+                              </div>
+                            ))}
+                            <div className="flex items-center justify-between text-sm font-semibold pt-2 border-t border-slate-200">
+                              <span>Total</span>
+                              <span className="text-primary">{formatCurrency(store.estimatedTotal)}</span>
+                            </div>
+                            <Button
+                              className="w-full mt-2"
+                              size="sm"
+                              onClick={() => {
+                                startSessionMutation.mutate(store.name);
+                                setShowStoreFinder(false);
+                                setSelectedStoreIdx(null);
+                              }}
+                              disabled={startSessionMutation.isPending}
+                            >
+                              {startSessionMutation.isPending
+                                ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                : <><PlayCircle className="h-3.5 w-3.5" /> Start Shopping at {store.name}</>
+                              }
+                            </Button>
+                          </div>
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
+                  </div>
                 ))}
               </div>
             )}
@@ -453,6 +516,9 @@ function CategoryGroup({ category, items, onRemove, onUpdate }: {
                         </div>
                         {item.notes && (
                           <p className="text-[10px] text-muted mt-0.5 italic">{item.notes}</p>
+                        )}
+                        {item.sourceRef && (
+                          <p className="text-[10px] text-primary mt-0.5 font-medium">🍽 {item.sourceRef}</p>
                         )}
                         {item.aisleHint && (
                           <p className="text-[10px] text-muted mt-0.5">Aisle: {item.aisleHint}</p>
