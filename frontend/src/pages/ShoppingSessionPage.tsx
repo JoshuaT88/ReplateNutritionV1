@@ -3,8 +3,9 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
-  Check, X, AlertTriangle, ArrowLeft, Package, DollarSign,
-  MapPin, Loader2, ShoppingCart, Timer, RefreshCw
+  Check, X, AlertTriangle, ArrowLeft, DollarSign,
+  MapPin, Loader2, ShoppingCart, Timer, RefreshCw,
+  List, LayoutGrid, Layers, ChevronDown, Package
 } from 'lucide-react';
 import { api } from '@/lib/api';
 import { Button } from '@/components/ui/button';
@@ -16,6 +17,7 @@ import { useToast } from '@/components/ui/toast';
 import { cn, formatCurrency } from '@/lib/utils';
 
 type ItemStatus = 'PENDING' | 'PICKED_UP' | 'OUT_OF_STOCK' | 'SKIPPED' | 'TOO_EXPENSIVE';
+type ViewMode = 'list' | 'checklist' | 'cards';
 
 const STATUS_STYLES: Record<ItemStatus, string> = {
   PENDING: 'bg-white border-card-border',
@@ -38,8 +40,10 @@ export default function ShoppingSessionPage() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { toast } = useToast();
-  const [showPriceInput, setShowPriceInput] = useState<string | null>(null);
-  const [priceValue, setPriceValue] = useState('');
+  const [viewMode, setViewMode] = useState<ViewMode>('list');
+  const [markingItem, setMarkingItem] = useState<{ id: string; name: string; aisleHint?: string } | null>(null);
+  const [markPrice, setMarkPrice] = useState('');
+  const [markAisle, setMarkAisle] = useState('');
   const [showEndConfirm, setShowEndConfirm] = useState(false);
   const [showReview, setShowReview] = useState(false);
   const [reviewPrices, setReviewPrices] = useState<Record<string, string>>({});
@@ -68,9 +72,16 @@ export default function ShoppingSessionPage() {
       api.submitSessionPrice(sessionId!, itemId, price),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['shoppingSession', sessionId] });
-      setShowPriceInput(null);
-      setPriceValue('');
       toast('success', 'Price recorded');
+    },
+  });
+
+  const submitAisleMutation = useMutation({
+    mutationFn: ({ itemId, aisle }: { itemId: string; aisle: string }) =>
+      api.submitSessionAisle(sessionId!, itemId, aisle),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['shoppingSession', sessionId] });
+      toast('success', 'Aisle saved');
     },
   });
 
@@ -87,7 +98,7 @@ export default function ShoppingSessionPage() {
   const pending = items.filter((i: any) => i.status === 'PENDING');
   const skipped = items.filter((i: any) => ['OUT_OF_STOCK', 'SKIPPED', 'TOO_EXPENSIVE'].includes(i.status));
 
-  const runningTotal = pickedUp.reduce((sum: number, i: any) => sum + (i.actualPrice || i.estimatedPrice || 0) * (parseInt(i.quantity) || 1), 0);
+  const runningTotal = pickedUp.reduce((sum: number, i: any) => sum + (i.actualPrice || i.estimatedPrice || 0), 0);
   const progress = items.length > 0 ? ((items.length - pending.length) / items.length) * 100 : 0;
 
   const formatTime = (seconds: number) => {
@@ -103,6 +114,33 @@ export default function ShoppingSessionPage() {
     acc[aisle].push(item);
     return acc;
   }, {});
+
+  // Group ALL items by category for checklist view
+  const categoryGrouped = items.reduce<Record<string, any[]>>((acc, item: any) => {
+    const cat = item.category || 'Other';
+    if (!acc[cat]) acc[cat] = [];
+    acc[cat].push(item);
+    return acc;
+  }, {});
+
+  const handlePickUp = (item: any) => {
+    updateStatusMutation.mutate({ itemId: item.id, status: 'PICKED_UP' });
+    setMarkingItem({ id: item.id, name: item.itemName, aisleHint: item.aisleHint });
+    setMarkPrice('');
+    setMarkAisle(item.aisleHint && item.aisleHint !== 'Unknown' ? item.aisleHint : '');
+  };
+
+  const handleMarkSubmit = () => {
+    if (!markingItem) return;
+    const price = parseFloat(markPrice);
+    if (!isNaN(price) && price > 0) {
+      submitPriceMutation.mutate({ itemId: markingItem.id, price });
+    }
+    if (markAisle.trim() && markAisle.trim() !== markingItem.aisleHint) {
+      submitAisleMutation.mutate({ itemId: markingItem.id, aisle: markAisle.trim() });
+    }
+    setMarkingItem(null);
+  };
 
   if (isLoading) {
     return (
@@ -147,29 +185,161 @@ export default function ShoppingSessionPage() {
             />
           </div>
         </div>
+
+        {/* View Mode Switcher */}
+        {!showReview && (
+          <div className="flex items-center gap-1 bg-slate-100 rounded-xl p-1 w-fit">
+            {([
+              { mode: 'list' as ViewMode, icon: List, label: 'List' },
+              { mode: 'checklist' as ViewMode, icon: LayoutGrid, label: 'Checklist' },
+              { mode: 'cards' as ViewMode, icon: Layers, label: 'Cards' },
+            ]).map(({ mode, icon: Icon, label }) => (
+              <button
+                key={mode}
+                onClick={() => setViewMode(mode)}
+                className={cn(
+                  'flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all',
+                  viewMode === mode
+                    ? 'bg-white shadow-sm text-foreground'
+                    : 'text-muted hover:text-foreground'
+                )}
+              >
+                <Icon className="h-3.5 w-3.5" />
+                {label}
+              </button>
+            ))}
+          </div>
+        )}
       </div>
 
-      {/* Pending Items grouped by aisle */}
-      {Object.entries(aisleGrouped).map(([aisle, aisleItems]) => (
-        <div key={aisle} className="space-y-2">
-          <p className="text-[10px] uppercase tracking-wider font-semibold text-muted flex items-center gap-1.5 px-1">
-            <MapPin className="h-3 w-3" /> {aisle}
-          </p>
-          {aisleItems.map((item: any) => (
-            <SessionItemCard
-              key={item.id}
-              item={item}
-              onPickUp={() => {
-                updateStatusMutation.mutate({ itemId: item.id, status: 'PICKED_UP' });
-                setShowPriceInput(item.id);
-              }}
-              onOutOfStock={() => updateStatusMutation.mutate({ itemId: item.id, status: 'OUT_OF_STOCK' })}
-              onSkip={() => updateStatusMutation.mutate({ itemId: item.id, status: 'SKIPPED' })}
-              onTooExpensive={() => updateStatusMutation.mutate({ itemId: item.id, status: 'TOO_EXPENSIVE' })}
-            />
+      {/* ═══════ VIEW: LIST ═══════ */}
+      {viewMode === 'list' && !showReview && (
+        <>
+          {Object.entries(aisleGrouped).map(([aisle, aisleItems]) => (
+            <div key={aisle} className="space-y-2">
+              <p className="text-[10px] uppercase tracking-wider font-semibold text-muted flex items-center gap-1.5 px-1">
+                <MapPin className="h-3 w-3" /> {aisle}
+              </p>
+              {aisleItems.map((item: any) => (
+                <ListItemCard
+                  key={item.id}
+                  item={item}
+                  onPickUp={() => handlePickUp(item)}
+                  onOutOfStock={() => updateStatusMutation.mutate({ itemId: item.id, status: 'OUT_OF_STOCK' })}
+                  onSkip={() => updateStatusMutation.mutate({ itemId: item.id, status: 'SKIPPED' })}
+                  onTooExpensive={() => updateStatusMutation.mutate({ itemId: item.id, status: 'TOO_EXPENSIVE' })}
+                />
+              ))}
+            </div>
+          ))}
+        </>
+      )}
+
+      {/* ═══════ VIEW: CHECKLIST ═══════ */}
+      {viewMode === 'checklist' && !showReview && (
+        <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+          {Object.entries(categoryGrouped).sort(([a], [b]) => a.localeCompare(b)).map(([category, catItems]) => (
+            <div key={category} className="space-y-0.5">
+              <h3 className="text-[11px] font-bold uppercase tracking-wider text-primary border-b-2 border-primary/30 pb-1 mb-1.5">
+                {category}
+              </h3>
+              {catItems.map((item: any) => {
+                const isDone = item.status !== 'PENDING';
+                const isPickedUp = item.status === 'PICKED_UP';
+                return (
+                  <div
+                    key={item.id}
+                    className={cn(
+                      'flex items-center gap-2 py-1.5 px-1.5 rounded-lg transition-all group cursor-pointer',
+                      isDone ? 'opacity-50' : 'hover:bg-slate-50'
+                    )}
+                  >
+                    <button
+                      onClick={() => {
+                        if (item.status === 'PENDING') handlePickUp(item);
+                        else updateStatusMutation.mutate({ itemId: item.id, status: 'PENDING' });
+                      }}
+                      className={cn(
+                        'w-4 h-4 rounded border-2 flex items-center justify-center shrink-0 transition-colors',
+                        isPickedUp ? 'bg-emerald-500 border-emerald-500' :
+                        isDone ? 'bg-slate-300 border-slate-300' :
+                        'border-slate-300 hover:border-primary'
+                      )}
+                    >
+                      {isDone && <Check className="h-2.5 w-2.5 text-white" />}
+                    </button>
+                    <span className={cn(
+                      'text-xs flex-1 min-w-0 truncate',
+                      isDone && 'line-through text-muted'
+                    )}>
+                      {item.itemName}
+                    </span>
+                    {item.quantity && (
+                      <span className="text-[9px] text-muted shrink-0">{item.quantity}</span>
+                    )}
+                    {!isDone && (
+                      <div className="hidden group-hover:flex items-center gap-0.5 shrink-0">
+                        <button onClick={() => updateStatusMutation.mutate({ itemId: item.id, status: 'OUT_OF_STOCK' })}
+                          className="p-0.5 rounded text-slate-400 hover:text-slate-600" title="Out of Stock">
+                          <X className="h-3 w-3" />
+                        </button>
+                        <button onClick={() => updateStatusMutation.mutate({ itemId: item.id, status: 'TOO_EXPENSIVE' })}
+                          className="p-0.5 rounded text-amber-400 hover:text-amber-600" title="Too Expensive">
+                          <DollarSign className="h-3 w-3" />
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
           ))}
         </div>
-      ))}
+      )}
+
+      {/* ═══════ VIEW: CARDS ═══════ */}
+      {viewMode === 'cards' && !showReview && (
+        <div className="space-y-3">
+          {Object.entries(aisleGrouped).map(([aisle, aisleItems]) => (
+            <AisleCard
+              key={aisle}
+              title={aisle}
+              pendingItems={aisleItems}
+              allItems={items.filter((i: any) => (i.aisleHint || 'No Aisle Info') === aisle)}
+              onPickUp={handlePickUp}
+              onOutOfStock={(id: string) => updateStatusMutation.mutate({ itemId: id, status: 'OUT_OF_STOCK' })}
+              onSkip={(id: string) => updateStatusMutation.mutate({ itemId: id, status: 'SKIPPED' })}
+              onTooExpensive={(id: string) => updateStatusMutation.mutate({ itemId: id, status: 'TOO_EXPENSIVE' })}
+              onRevert={(id: string) => updateStatusMutation.mutate({ itemId: id, status: 'PENDING' })}
+            />
+          ))}
+          {/* Show completed-only aisles */}
+          {(() => {
+            const doneAisles = items
+              .filter((i: any) => i.status !== 'PENDING')
+              .reduce<Record<string, any[]>>((acc, item: any) => {
+                const aisle = item.aisleHint || 'No Aisle Info';
+                if (aisleGrouped[aisle]) return acc;
+                if (!acc[aisle]) acc[aisle] = [];
+                acc[aisle].push(item);
+                return acc;
+              }, {});
+            return Object.entries(doneAisles).map(([aisle, aisleItems]) => (
+              <AisleCard
+                key={`done-${aisle}`}
+                title={aisle}
+                pendingItems={[]}
+                allItems={aisleItems}
+                onPickUp={handlePickUp}
+                onOutOfStock={(id: string) => updateStatusMutation.mutate({ itemId: id, status: 'OUT_OF_STOCK' })}
+                onSkip={(id: string) => updateStatusMutation.mutate({ itemId: id, status: 'SKIPPED' })}
+                onTooExpensive={(id: string) => updateStatusMutation.mutate({ itemId: id, status: 'TOO_EXPENSIVE' })}
+                onRevert={(id: string) => updateStatusMutation.mutate({ itemId: id, status: 'PENDING' })}
+              />
+            ));
+          })()}
+        </div>
+      )}
 
       {pending.length === 0 && !showReview && (
         <div className="text-center py-12">
@@ -210,8 +380,6 @@ export default function ShoppingSessionPage() {
             </p>
             {pickedUp.map((item: any) => {
               const priceStr = reviewPrices[item.id] || '';
-              const priceNum = parseFloat(priceStr);
-              const qty = parseInt(item.quantity) || 1;
               return (
                 <Card key={item.id}>
                   <CardContent className="p-3">
@@ -220,7 +388,7 @@ export default function ShoppingSessionPage() {
                       <div className="flex-1 min-w-0">
                         <p className="text-sm font-medium">{item.itemName}</p>
                         <div className="flex items-center gap-2 text-[10px] text-muted mt-0.5">
-                          <span>Qty: {qty}</span>
+                          {item.quantity && <span>Qty: {item.quantity}</span>}
                           {item.aisleHint && item.aisleHint !== 'Unknown' && (
                             <span className="flex items-center gap-0.5 text-blue-600">
                               <MapPin className="h-3 w-3" /> {item.aisleHint}
@@ -244,11 +412,6 @@ export default function ShoppingSessionPage() {
                         />
                       </div>
                     </div>
-                    {!isNaN(priceNum) && qty > 1 && (
-                      <p className="text-[10px] text-muted text-right mt-1">
-                        Subtotal: {formatCurrency(priceNum * qty)}
-                      </p>
-                    )}
                   </CardContent>
                 </Card>
               );
@@ -284,11 +447,11 @@ export default function ShoppingSessionPage() {
               </div>
               {(() => {
                 const estimatedTotal = pickedUp.reduce((sum: number, i: any) => {
-                  return sum + (i.estimatedPrice || 0) * (parseInt(i.quantity) || 1);
+                  return sum + (i.estimatedPrice || 0);
                 }, 0);
                 const confirmedTotal = pickedUp.reduce((sum: number, i: any) => {
                   const p = parseFloat(reviewPrices[i.id] || '0');
-                  return sum + (isNaN(p) ? 0 : p) * (parseInt(i.quantity) || 1);
+                  return sum + (isNaN(p) ? 0 : p);
                 }, 0);
                 const diff = confirmedTotal - estimatedTotal;
                 return (
@@ -334,7 +497,7 @@ export default function ShoppingSessionPage() {
       )}
 
       {/* Picked up (collapsible) */}
-      {pickedUp.length > 0 && !showReview && (
+      {pickedUp.length > 0 && !showReview && viewMode === 'list' && (
         <div className="space-y-2">
           <p className="text-[10px] uppercase tracking-wider font-semibold text-emerald-600 px-1">
             Picked Up ({pickedUp.length})
@@ -360,7 +523,11 @@ export default function ShoppingSessionPage() {
                   <span className="text-xs font-mono text-muted">~{formatCurrency(item.estimatedPrice)}</span>
                 ) : (
                   <button
-                    onClick={() => { setShowPriceInput(item.id); setPriceValue(''); }}
+                    onClick={() => {
+                      setMarkingItem({ id: item.id, name: item.itemName, aisleHint: item.aisleHint });
+                      setMarkPrice('');
+                      setMarkAisle(item.aisleHint || '');
+                    }}
                     className="text-[10px] text-primary underline"
                   >
                     Add price
@@ -379,7 +546,7 @@ export default function ShoppingSessionPage() {
       )}
 
       {/* Skipped (collapsible) */}
-      {skipped.length > 0 && !showReview && (
+      {skipped.length > 0 && !showReview && viewMode === 'list' && (
         <div className="space-y-2">
           <p className="text-[10px] uppercase tracking-wider font-semibold text-slate-400 px-1">
             Skipped / Unavailable ({skipped.length})
@@ -407,36 +574,50 @@ export default function ShoppingSessionPage() {
         </div>
       )}
 
-      {/* Price Input Dialog */}
-      <Dialog open={!!showPriceInput} onOpenChange={() => setShowPriceInput(null)}>
+      {/* Combined Price + Aisle Dialog */}
+      <Dialog open={!!markingItem} onOpenChange={() => setMarkingItem(null)}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Enter Actual Price</DialogTitle>
+            <DialogTitle>Item Details</DialogTitle>
           </DialogHeader>
-          <div className="my-4">
-            <p className="text-sm text-muted mb-3">Optional: Enter the actual price to help improve future estimates.</p>
-            <Input
-              type="number"
-              step="0.01"
-              min="0"
-              placeholder="0.00"
-              value={priceValue}
-              onChange={(e) => setPriceValue(e.target.value)}
-              className="text-lg font-mono"
-              autoFocus
-            />
-          </div>
+          {markingItem && (
+            <div className="space-y-4 my-4">
+              <p className="text-sm font-medium">{markingItem.name}</p>
+
+              <div>
+                <label className="text-xs font-medium text-muted block mb-1.5">Price paid (total)</label>
+                <div className="relative">
+                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-muted">$</span>
+                  <Input
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    placeholder="0.00"
+                    value={markPrice}
+                    onChange={(e) => setMarkPrice(e.target.value)}
+                    className="pl-7 text-lg font-mono"
+                    autoFocus
+                  />
+                </div>
+                <p className="text-[10px] text-muted mt-1">Helps improve future price estimates at this store</p>
+              </div>
+
+              <div>
+                <label className="text-xs font-medium text-muted block mb-1.5">Store location / aisle</label>
+                <Input
+                  placeholder="e.g., Aisle 5, Produce Section, Back wall"
+                  value={markAisle}
+                  onChange={(e) => setMarkAisle(e.target.value)}
+                />
+                <p className="text-[10px] text-muted mt-1">Helps improve aisle info for future trips here</p>
+              </div>
+            </div>
+          )}
           <DialogFooter>
-            <Button variant="outline" onClick={() => { setShowPriceInput(null); setPriceValue(''); }}>Skip</Button>
-            <Button
-              onClick={() => {
-                if (showPriceInput && priceValue) {
-                  submitPriceMutation.mutate({ itemId: showPriceInput, price: parseFloat(priceValue) });
-                }
-              }}
-              disabled={!priceValue || submitPriceMutation.isPending}
-            >
-              Save Price
+            <Button variant="outline" onClick={() => setMarkingItem(null)}>Skip</Button>
+            <Button onClick={handleMarkSubmit}
+              disabled={submitPriceMutation.isPending || submitAisleMutation.isPending}>
+              Save
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -490,7 +671,7 @@ export default function ShoppingSessionPage() {
   );
 }
 
-function SessionItemCard({ item, onPickUp, onOutOfStock, onSkip, onTooExpensive }: {
+function ListItemCard({ item, onPickUp, onOutOfStock, onSkip, onTooExpensive }: {
   item: any;
   onPickUp: () => void;
   onOutOfStock: () => void;
@@ -523,7 +704,6 @@ function SessionItemCard({ item, onPickUp, onOutOfStock, onSkip, onTooExpensive 
           </div>
         </div>
 
-        {/* Aisle info - prominent */}
         {item.aisleHint && item.aisleHint !== 'Unknown' && (
           <div className="mt-2 px-2.5 py-1.5 rounded-lg bg-blue-50 border border-blue-100 flex items-center gap-1.5">
             <MapPin className="h-3.5 w-3.5 text-blue-600 shrink-0" />
@@ -531,38 +711,119 @@ function SessionItemCard({ item, onPickUp, onOutOfStock, onSkip, onTooExpensive 
           </div>
         )}
 
-        {/* Action buttons — large touch targets for mobile */}
         <div className="grid grid-cols-4 gap-2 mt-3">
-          <button
-            onClick={onPickUp}
-            className="flex flex-col items-center gap-1 py-2.5 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-700 hover:bg-emerald-100 transition-colors active:scale-95"
-          >
-            <Check className="h-5 w-5" />
-            <span className="text-[10px] font-medium">Pick Up</span>
+          <button onClick={onPickUp}
+            className="flex flex-col items-center gap-1 py-2.5 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-700 hover:bg-emerald-100 transition-colors active:scale-95">
+            <Check className="h-5 w-5" /><span className="text-[10px] font-medium">Pick Up</span>
           </button>
-          <button
-            onClick={onOutOfStock}
-            className="flex flex-col items-center gap-1 py-2.5 rounded-xl bg-slate-50 border border-slate-200 text-slate-600 hover:bg-slate-100 transition-colors active:scale-95"
-          >
-            <X className="h-5 w-5" />
-            <span className="text-[10px] font-medium">No Stock</span>
+          <button onClick={onOutOfStock}
+            className="flex flex-col items-center gap-1 py-2.5 rounded-xl bg-slate-50 border border-slate-200 text-slate-600 hover:bg-slate-100 transition-colors active:scale-95">
+            <X className="h-5 w-5" /><span className="text-[10px] font-medium">No Stock</span>
           </button>
-          <button
-            onClick={onTooExpensive}
-            className="flex flex-col items-center gap-1 py-2.5 rounded-xl bg-amber-50 border border-amber-200 text-amber-700 hover:bg-amber-100 transition-colors active:scale-95"
-          >
-            <DollarSign className="h-5 w-5" />
-            <span className="text-[10px] font-medium">Pricey</span>
+          <button onClick={onTooExpensive}
+            className="flex flex-col items-center gap-1 py-2.5 rounded-xl bg-amber-50 border border-amber-200 text-amber-700 hover:bg-amber-100 transition-colors active:scale-95">
+            <DollarSign className="h-5 w-5" /><span className="text-[10px] font-medium">Pricey</span>
           </button>
-          <button
-            onClick={onSkip}
-            className="flex flex-col items-center gap-1 py-2.5 rounded-xl bg-slate-50 border border-slate-200 text-slate-400 hover:bg-slate-100 transition-colors active:scale-95"
-          >
-            <AlertTriangle className="h-5 w-5" />
-            <span className="text-[10px] font-medium">Skip</span>
+          <button onClick={onSkip}
+            className="flex flex-col items-center gap-1 py-2.5 rounded-xl bg-slate-50 border border-slate-200 text-slate-400 hover:bg-slate-100 transition-colors active:scale-95">
+            <AlertTriangle className="h-5 w-5" /><span className="text-[10px] font-medium">Skip</span>
           </button>
         </div>
       </CardContent>
+    </Card>
+  );
+}
+
+/* ═════ CARDS VIEW – AISLE CARD ═════ */
+function AisleCard({ title, pendingItems, allItems, onPickUp, onOutOfStock, onSkip, onTooExpensive, onRevert }: {
+  title: string; pendingItems: any[]; allItems: any[];
+  onPickUp: (item: any) => void; onOutOfStock: (id: string) => void;
+  onSkip: (id: string) => void; onTooExpensive: (id: string) => void; onRevert: (id: string) => void;
+}) {
+  const [expanded, setExpanded] = useState(pendingItems.length > 0);
+  const doneCount = allItems.filter((i: any) => i.status !== 'PENDING').length;
+  const totalCount = allItems.length;
+  const allDone = pendingItems.length === 0;
+
+  return (
+    <Card className={cn(allDone && 'opacity-60')}>
+      <button onClick={() => setExpanded(!expanded)}
+        className="w-full flex items-center gap-3 px-4 py-3 text-left">
+        <div className={cn(
+          'w-8 h-8 rounded-lg flex items-center justify-center shrink-0',
+          allDone ? 'bg-emerald-100' : 'bg-primary/10'
+        )}>
+          {allDone ? <Check className="h-4 w-4 text-emerald-600" /> : <Package className="h-4 w-4 text-primary" />}
+        </div>
+        <div className="flex-1 min-w-0">
+          <p className="text-sm font-semibold flex items-center gap-1.5">
+            <MapPin className="h-3 w-3 text-muted" /> {title}
+          </p>
+          <p className="text-[10px] text-muted">{doneCount}/{totalCount} items done</p>
+        </div>
+        <ChevronDown className={cn('h-4 w-4 text-muted transition-transform', !expanded && '-rotate-90')} />
+      </button>
+
+      <AnimatePresence>
+        {expanded && (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: 'auto', opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            className="overflow-hidden"
+          >
+            <div className="px-4 pb-3 space-y-1.5">
+              {pendingItems.map((item: any) => (
+                <div key={item.id} className="flex items-center gap-2 py-2 px-2 rounded-lg border border-card-border">
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium">{item.itemName}</p>
+                    {item.quantity && <span className="text-[10px] text-muted">{item.quantity}</span>}
+                  </div>
+                  <div className="flex items-center gap-1 shrink-0">
+                    <button onClick={() => onPickUp(item)}
+                      className="p-1.5 rounded-lg bg-emerald-50 text-emerald-600 hover:bg-emerald-100" title="Pick Up">
+                      <Check className="h-4 w-4" />
+                    </button>
+                    <button onClick={() => onOutOfStock(item.id)}
+                      className="p-1.5 rounded-lg bg-slate-50 text-slate-500 hover:bg-slate-100" title="No Stock">
+                      <X className="h-4 w-4" />
+                    </button>
+                    <button onClick={() => onTooExpensive(item.id)}
+                      className="p-1.5 rounded-lg bg-amber-50 text-amber-600 hover:bg-amber-100" title="Too Expensive">
+                      <DollarSign className="h-4 w-4" />
+                    </button>
+                    <button onClick={() => onSkip(item.id)}
+                      className="p-1.5 rounded-lg bg-slate-50 text-slate-400 hover:bg-slate-100" title="Skip">
+                      <AlertTriangle className="h-4 w-4" />
+                    </button>
+                  </div>
+                </div>
+              ))}
+              {allItems.filter((i: any) => i.status !== 'PENDING').map((item: any) => (
+                <div key={item.id} className={cn(
+                  'flex items-center gap-2 py-1.5 px-2 rounded-lg',
+                  item.status === 'PICKED_UP' ? 'bg-emerald-50' : 'bg-slate-50 opacity-60'
+                )}>
+                  {item.status === 'PICKED_UP' ? (
+                    <Check className="h-3.5 w-3.5 text-emerald-600 shrink-0" />
+                  ) : (
+                    <X className="h-3.5 w-3.5 text-slate-400 shrink-0" />
+                  )}
+                  <span className={cn('text-xs flex-1 line-through', item.status === 'PICKED_UP' ? 'text-emerald-800' : 'text-muted')}>
+                    {item.itemName}
+                  </span>
+                  {item.actualPrice && (
+                    <span className="text-[10px] font-mono text-emerald-700">{formatCurrency(item.actualPrice)}</span>
+                  )}
+                  <button onClick={() => onRevert(item.id)} className="text-muted hover:text-foreground">
+                    <RefreshCw className="h-3 w-3" />
+                  </button>
+                </div>
+              ))}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </Card>
   );
 }

@@ -37,7 +37,8 @@ export default function DashboardPage() {
   const { data: todayMeals, isLoading: mealsLoading } = useQuery({
     queryKey: ['todayMeals'],
     queryFn: () => {
-      const today = new Date().toISOString().split('T')[0];
+      const now = new Date();
+      const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
       return api.getMealPlans({ startDate: today, endDate: today });
     },
   });
@@ -47,7 +48,7 @@ export default function DashboardPage() {
     queryFn: () => api.getRecommendations(),
   });
 
-  const budget = preferences?.budget || 0;
+  const budget = preferences?.budget || 0; // Budget is stored as monthly
   const budgetData = [
     { name: 'Spent', value: 0 },
     { name: 'Remaining', value: budget },

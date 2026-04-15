@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useSearchParams, Link, useNavigate } from 'react-router-dom';
+import { useSearchParams, Link } from 'react-router-dom';
 import { useMutation } from '@tanstack/react-query';
 import { Lock, Loader2, CheckCircle } from 'lucide-react';
 import { api } from '@/lib/api';
@@ -11,7 +11,6 @@ import { useToast } from '@/components/ui/toast';
 
 export default function ResetPasswordPage() {
   const [searchParams] = useSearchParams();
-  const navigate = useNavigate();
   const { toast } = useToast();
   const token = searchParams.get('token') || '';
   const [password, setPassword] = useState('');

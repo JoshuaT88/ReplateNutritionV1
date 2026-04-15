@@ -2,6 +2,8 @@ import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
 import cookieParser from 'cookie-parser';
+import fs from 'fs';
+import path from 'path';
 import { env } from './config/env.js';
 import { errorHandler } from './middleware/errorHandler.js';
 import { rateLimiter } from './middleware/rateLimiter.js';
@@ -16,6 +18,10 @@ import pricingRoutes from './routes/pricing.js';
 import aisleRoutes from './routes/aisles.js';
 
 const app = express();
+
+// Ensure uploads directory exists
+const uploadsDir = path.resolve('uploads/receipts');
+fs.mkdirSync(uploadsDir, { recursive: true });
 
 app.use(helmet());
 app.use(cors({

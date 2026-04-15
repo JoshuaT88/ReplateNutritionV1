@@ -1,5 +1,6 @@
 import { createContext, useContext, useState, useEffect, useCallback, startTransition, type ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import type { User, UserPreferences } from '@/types';
 
@@ -21,6 +22,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [preferences, setPreferences] = useState<UserPreferences | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
 
   const loadUser = useCallback(async () => {
     try {
@@ -52,6 +54,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const login = async (email: string, password: string) => {
     const res = await api.login(email, password);
     api.setTokens(res.accessToken, res.refreshToken);
+    queryClient.clear(); // Clear all cached data from previous user
     const prefs = await api.getPreferences();
     startTransition(() => {
       setUser(res.user);
@@ -62,6 +65,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const register = async (email: string, password: string, fullName: string) => {
     const res = await api.register(email, password, fullName);
     api.setTokens(res.accessToken, res.refreshToken);
+    queryClient.clear(); // Clear all cached data
     const prefs = await api.getPreferences();
     startTransition(() => {
       setUser(res.user);
@@ -72,6 +76,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const logout = async () => {
     try { await api.logout(); } catch { /* ignore */ }
     api.clearTokens();
+    queryClient.clear(); // Clear all cached data
     setUser(null);
     setPreferences(null);
     navigate('/login');

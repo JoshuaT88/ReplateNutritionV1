@@ -2,16 +2,16 @@ import { useState, useMemo } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
-  CalendarDays, ChevronLeft, ChevronRight, Plus, Loader2, Check, Trash2,
-  Sparkles, ShoppingCart, Clock, Users, UtensilsCrossed
+  ChevronLeft, ChevronRight, Loader2, Check, Trash2,
+  Sparkles, Clock, Users, UtensilsCrossed
 } from 'lucide-react';
 import { api } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { Card, CardContent } from '@/components/ui/card';
+import { Card } from '@/components/ui/card';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Skeleton } from '@/components/ui/skeleton';
-import { EmptyState } from '@/components/shared/EmptyState';
+
 import { ErrorCard } from '@/components/shared/ErrorCard';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { useToast } from '@/components/ui/toast';
@@ -20,12 +20,17 @@ import type { MealPlan } from '@/types';
 
 type ViewMode = 'day' | 'week' | '2weeks' | 'month';
 
-const MEAL_TYPES = ['breakfast', 'lunch', 'dinner', 'snack'] as const;
+const ALL_KNOWN_TYPES = ['breakfast', 'lunch', 'dinner', 'snack', 'beverage', 'dessert', 'morning_feed', 'evening_feed', 'treat_time'];
 const MEAL_COLORS: Record<string, string> = {
   breakfast: 'bg-amber-50 border-amber-200 text-amber-800',
   lunch: 'bg-emerald-50 border-emerald-200 text-emerald-800',
   dinner: 'bg-violet-50 border-violet-200 text-violet-800',
   snack: 'bg-sky-50 border-sky-200 text-sky-800',
+  beverage: 'bg-cyan-50 border-cyan-200 text-cyan-800',
+  dessert: 'bg-pink-50 border-pink-200 text-pink-800',
+  morning_feed: 'bg-orange-50 border-orange-200 text-orange-800',
+  evening_feed: 'bg-indigo-50 border-indigo-200 text-indigo-800',
+  treat_time: 'bg-rose-50 border-rose-200 text-rose-800',
 };
 
 function getWeekDates(baseDate: Date, view: ViewMode): Date[] {
@@ -51,6 +56,16 @@ function isSameDay(a: Date, b: Date) {
   return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
 }
 
+// Parse a meal date string (UTC from DB) to a local YYYY-MM-DD for comparison
+function mealDateToLocalStr(dateStr: string): string {
+  // DB stores as @db.Date, returned as "2026-04-14T00:00:00.000Z" — take just the date part
+  return dateStr.split('T')[0];
+}
+
+function localDateToStr(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
 export default function MealPlanPage() {
   const queryClient = useQueryClient();
   const { toast } = useToast();
@@ -59,6 +74,7 @@ export default function MealPlanPage() {
   const [showGenerate, setShowGenerate] = useState(false);
   const [generateDays, setGenerateDays] = useState(7);
   const [selectedProfiles, setSelectedProfiles] = useState<string[]>([]);
+  const [filterProfileId, setFilterProfileId] = useState<string>('all');
 
   const dates = useMemo(() => getWeekDates(baseDate, view), [baseDate, view]);
   const toLocalDateStr = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
@@ -80,7 +96,7 @@ export default function MealPlanPage() {
     mutationFn: () => {
       const startDate = toLocalDateStr(new Date());
       const mealTypes = ['breakfast', 'lunch', 'dinner', 'snack'];
-      return api.generateMealPlan(selectedProfiles, startDate, mealTypes);
+      return api.generateMealPlan(selectedProfiles, startDate, mealTypes, generateDays);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['mealPlans'] });
@@ -113,8 +129,13 @@ export default function MealPlanPage() {
 
   const goToday = () => setBaseDate(new Date());
 
-  const getMealsForDate = (date: Date) =>
-    mealPlans?.filter((m) => isSameDay(new Date(m.date), date)) || [];
+  const getMealsForDate = (date: Date) => {
+    const dateStr = localDateToStr(date);
+    return mealPlans?.filter((m) =>
+      mealDateToLocalStr(m.date) === dateStr &&
+      (filterProfileId === 'all' || m.profileId === filterProfileId)
+    ) || [];
+  };
 
   const today = new Date();
 
@@ -157,6 +178,38 @@ export default function MealPlanPage() {
           </TabsList>
         </Tabs>
       </div>
+
+      {/* Profile Filter */}
+      {profiles && profiles.length > 0 && (
+        <div className="flex items-center gap-2 flex-wrap">
+          <span className="text-xs font-medium text-muted">Filter:</span>
+          <button
+            onClick={() => setFilterProfileId('all')}
+            className={cn(
+              'px-3 py-1 rounded-full text-xs font-medium border transition-all',
+              filterProfileId === 'all'
+                ? 'border-primary bg-primary/10 text-primary'
+                : 'border-card-border text-muted hover:border-slate-300'
+            )}
+          >
+            All Profiles
+          </button>
+          {profiles.map((p) => (
+            <button
+              key={p.id}
+              onClick={() => setFilterProfileId(filterProfileId === p.id ? 'all' : p.id)}
+              className={cn(
+                'px-3 py-1 rounded-full text-xs font-medium border transition-all',
+                filterProfileId === p.id
+                  ? 'border-primary bg-primary/10 text-primary'
+                  : 'border-card-border text-muted hover:border-slate-300'
+              )}
+            >
+              {p.name}
+            </button>
+          ))}
+        </div>
+      )}
 
       {/* Content */}
       {error ? (
@@ -285,6 +338,13 @@ function DayRow({ date, meals, isToday, onToggle, onDelete }: {
   const monthName = date.toLocaleDateString('en-US', { month: 'short' });
   const completedCount = meals.filter((m) => m.completed).length;
 
+  // Derive ordered meal types from actual data (known types first, then any extras)
+  const uniqueTypes = [...new Set(meals.map(m => m.mealType))] as string[];
+  const orderedTypes = [
+    ...ALL_KNOWN_TYPES.filter(t => uniqueTypes.includes(t)),
+    ...uniqueTypes.filter(t => !ALL_KNOWN_TYPES.includes(t))
+  ];
+
   return (
     <Card className={cn(isToday && 'ring-2 ring-primary/30')}>
       <button
@@ -307,10 +367,10 @@ function DayRow({ date, meals, isToday, onToggle, onDelete }: {
           </p>
         </div>
         <div className="flex items-center gap-1.5">
-          {MEAL_TYPES.map((type) => {
+          {orderedTypes.map((type) => {
             const count = meals.filter((m) => m.mealType === type).length;
             if (count === 0) return null;
-            return <Badge key={type} variant="secondary" className={cn('text-[10px]', MEAL_COLORS[type])}>{type[0].toUpperCase()}</Badge>;
+            return <Badge key={type} variant="secondary" className={cn('text-[10px]', MEAL_COLORS[type] || 'bg-slate-50 border-slate-200 text-slate-800')}>{type.replace('_', ' ').split(' ').map(w => w[0].toUpperCase()).join('')}</Badge>;
           })}
         </div>
         <ChevronLeft className={cn('h-4 w-4 text-muted transition-transform', expanded && '-rotate-90')} />
@@ -325,12 +385,12 @@ function DayRow({ date, meals, isToday, onToggle, onDelete }: {
             className="overflow-hidden"
           >
             <div className="px-5 pb-4 space-y-2">
-              {MEAL_TYPES.map((type) => {
+              {orderedTypes.map((type) => {
                 const typeMeals = meals.filter((m) => m.mealType === type);
                 if (typeMeals.length === 0) return null;
                 return (
                   <div key={type}>
-                    <p className="text-[10px] uppercase tracking-wider font-semibold text-muted mb-1.5">{type}</p>
+                    <p className="text-[10px] uppercase tracking-wider font-semibold text-muted mb-1.5">{type.replace(/_/g, ' ')}</p>
                     <div className="space-y-1.5">
                       {typeMeals.map((meal) => (
                         <div

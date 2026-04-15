@@ -1,16 +1,18 @@
-import { useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useState, useRef } from 'react';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   History, ShoppingCart, MapPin, Clock, DollarSign, ChevronDown,
-  Check, X, TrendingUp, TrendingDown, Minus
+  Check, X, TrendingUp, TrendingDown, Minus, Upload
 } from 'lucide-react';
 import { api } from '@/lib/api';
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { EmptyState } from '@/components/shared/EmptyState';
 import { ErrorCard } from '@/components/shared/ErrorCard';
+import { useToast } from '@/components/ui/toast';
 import { cn, formatCurrency, formatDate } from '@/lib/utils';
 
 export default function ShoppingHistoryPage() {
@@ -89,6 +91,19 @@ export default function ShoppingHistoryPage() {
 
 function TripCard({ trip }: { trip: any }) {
   const [expanded, setExpanded] = useState(false);
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const uploadMutation = useMutation({
+    mutationFn: (files: FileList) => api.uploadReceipts(trip.id, files),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['shoppingHistory'] });
+      toast('success', 'Receipt uploaded!');
+    },
+    onError: (err: Error) => toast('error', 'Upload failed', err.message),
+  });
 
   // Build unified items array from the separate JSON arrays
   const pickedUp = ((trip.itemsPickedUp as any[]) || []).map((i: any) => ({ ...i, status: 'PICKED_UP' }));
@@ -218,10 +233,88 @@ function TripCard({ trip }: { trip: any }) {
                   </div>
                 ))}
               </div>
+
+              {/* Receipts */}
+              <div className="pt-2 border-t border-slate-100">
+                <div className="flex items-center justify-between mb-2">
+                  <p className="text-xs font-semibold text-foreground">Receipt Photos</p>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="text-xs"
+                    onClick={() => fileInputRef.current?.click()}
+                    disabled={uploadMutation.isPending}
+                  >
+                    {uploadMutation.isPending
+                      ? <><span className="animate-spin">⏳</span> Uploading...</>
+                      : <><Upload className="h-3.5 w-3.5" /> Upload Receipt</>}
+                  </Button>
+                </div>
+                {Array.isArray(trip.receiptUrls) && trip.receiptUrls.length > 0 && (
+                  <div className="flex gap-3 flex-wrap">
+                    {trip.receiptUrls.map((url: string, idx: number) => (
+                      <button
+                        key={idx}
+                        onClick={() => setPreviewUrl(url)}
+                        className="w-28 h-28 rounded-xl border-2 border-card-border overflow-hidden bg-slate-50 hover:ring-2 hover:ring-primary/30 hover:border-primary/40 transition-all cursor-pointer relative group"
+                      >
+                        <img
+                          src={url}
+                          alt={`Receipt ${idx + 1}`}
+                          className="w-full h-full object-cover"
+                          onError={(e) => {
+                            (e.target as HTMLImageElement).style.display = 'none';
+                            (e.target as HTMLImageElement).parentElement!.querySelector('.fallback-icon')?.classList.remove('hidden');
+                          }}
+                        />
+                        <div className="fallback-icon hidden w-full h-full flex items-center justify-center absolute inset-0">
+                          <Upload className="h-6 w-6 text-muted" />
+                        </div>
+                        <div className="absolute inset-0 bg-black/0 group-hover:bg-black/10 transition-colors rounded-xl" />
+                      </button>
+                    ))}
+                  </div>
+                )}
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="image/jpeg,image/png,image/webp,image/heic"
+                  multiple
+                  className="hidden"
+                  onChange={(e) => {
+                    if (e.target.files && e.target.files.length > 0) {
+                      uploadMutation.mutate(e.target.files);
+                      e.target.value = '';
+                    }
+                  }}
+                />
+              </div>
             </div>
           </motion.div>
         )}
       </AnimatePresence>
+
+      {/* Receipt Preview Modal */}
+      {previewUrl && (
+        <div
+          className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4"
+          onClick={() => setPreviewUrl(null)}
+        >
+          <div className="relative max-w-2xl max-h-[90vh] w-full" onClick={(e) => e.stopPropagation()}>
+            <button
+              onClick={() => setPreviewUrl(null)}
+              className="absolute -top-3 -right-3 z-10 w-8 h-8 rounded-full bg-white shadow-lg flex items-center justify-center hover:bg-slate-100 transition-colors"
+            >
+              <X className="h-4 w-4" />
+            </button>
+            <img
+              src={previewUrl}
+              alt="Receipt preview"
+              className="w-full h-auto max-h-[85vh] object-contain rounded-xl shadow-2xl bg-white"
+            />
+          </div>
+        </div>
+      )}
     </Card>
   );
 }

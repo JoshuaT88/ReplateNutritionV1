@@ -28,7 +28,8 @@ export async function generateMealPlan(
   userId: string,
   profileIds: string[],
   date: string,
-  mealTypes: string[]
+  mealTypes: string[],
+  days: number = 7
 ) {
   const profiles = await prisma.profile.findMany({
     where: { id: { in: profileIds }, userId },
@@ -61,23 +62,60 @@ export async function generateMealPlan(
     foodDislikes: p.foodDislikes,
   }));
 
-  const aiMeals = await aiService.generateMeals(
-    profileContexts,
-    date,
-    mealTypes,
-    recentMeals.map((m) => m.mealName)
-  );
+  // Generate dates for the requested range
+  const dateList: string[] = [];
+  const startD = new Date(date + 'T12:00:00');
+  for (let i = 0; i < days; i++) {
+    const d = new Date(startD);
+    d.setDate(d.getDate() + i);
+    const ds = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    dateList.push(ds);
+  }
+
+  // Batch generation: max 2 days per AI call to stay under token limits
+  const BATCH_SIZE = 2;
+  const allAiMeals: any[] = [];
+  const usedMealNames = recentMeals.map((m) => m.mealName);
+
+  for (let i = 0; i < dateList.length; i += BATCH_SIZE) {
+    const batchDates = dateList.slice(i, i + BATCH_SIZE);
+    const batchMeals = await aiService.generateMeals(
+      profileContexts,
+      batchDates,
+      mealTypes,
+      [...usedMealNames, ...allAiMeals.map((m) => m.mealName)]
+    );
+
+    // Ensure every meal has a valid date from this batch
+    const mealsPerDate: Record<string, number> = {};
+    for (const d of batchDates) mealsPerDate[d] = 0;
+
+    for (const meal of batchMeals) {
+      if (!meal.date || !batchDates.includes(meal.date)) {
+        // Assign to the date with fewest meals to balance distribution
+        const minDate = batchDates.reduce((min, d) =>
+          (mealsPerDate[d] || 0) < (mealsPerDate[min] || 0) ? d : min
+        , batchDates[0]);
+        meal.date = minDate;
+      }
+      mealsPerDate[meal.date] = (mealsPerDate[meal.date] || 0) + 1;
+    }
+
+    allAiMeals.push(...batchMeals);
+  }
 
   const savedMeals = [];
-  for (const meal of aiMeals) {
+  for (const meal of allAiMeals) {
     const profile = profiles.find((p) => p.name === meal.profileName);
     if (!profile) continue;
 
+    // Use the date from the AI response, falling back to the start date
+    const mealDate = meal.date || date;
     const saved = await prisma.mealPlan.create({
       data: {
         userId,
         profileId: profile.id,
-        date: new Date(date + 'T12:00:00'),
+        date: new Date(mealDate + 'T12:00:00'),
         mealType: meal.mealType,
         mealName: meal.mealName,
         ingredients: meal.ingredients || [],

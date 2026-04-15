@@ -2,9 +2,26 @@ import { useState } from 'react';
 import { Outlet } from 'react-router-dom';
 import { Sidebar } from './Sidebar';
 import { MobileNav } from './MobileNav';
+import { OnboardingFlow } from '../onboarding/OnboardingFlow';
+import { useAuth } from '@/contexts/AuthContext';
 
-export function AppShell() {
+export function AppShell({ children }: { children?: React.ReactNode }) {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const { preferences, refreshPreferences } = useAuth();
+  const [onboardingDismissed, setOnboardingDismissed] = useState(false);
+
+  const showOnboarding = !onboardingDismissed && preferences && !preferences.firstVisitCompleted;
+
+  if (showOnboarding) {
+    return (
+      <OnboardingFlow
+        onComplete={() => {
+          setOnboardingDismissed(true);
+          refreshPreferences();
+        }}
+      />
+    );
+  }
 
   return (
     <div className="min-h-screen bg-background">
@@ -20,7 +37,7 @@ export function AppShell() {
         style={{ marginLeft: typeof window !== 'undefined' && window.innerWidth >= 1024 ? (sidebarCollapsed ? 72 : 280) : 0 }}
       >
         <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-6 lg:py-8">
-          <Outlet />
+          {children || <Outlet />}
         </div>
       </main>
 

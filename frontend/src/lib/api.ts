@@ -159,9 +159,9 @@ class ApiClient {
   createMealPlan(data: Partial<MealPlan>) {
     return this.request<MealPlan>('/meal-plan', { method: 'POST', body: JSON.stringify(data) });
   }
-  generateMealPlan(profileIds: string[], date: string, mealTypes: string[]) {
+  generateMealPlan(profileIds: string[], date: string, mealTypes: string[], days: number = 7) {
     return this.request<MealPlan[]>('/meal-plan/generate', {
-      method: 'POST', body: JSON.stringify({ profileIds, date, mealTypes }),
+      method: 'POST', body: JSON.stringify({ profileIds, date, mealTypes, days }),
     });
   }
   updateMealPlan(id: string, data: Partial<MealPlan>) {
@@ -214,6 +214,11 @@ class ApiClient {
       method: 'POST', body: JSON.stringify({ price }),
     });
   }
+  submitSessionAisle(sessionId: string, itemId: string, aisle: string) {
+    return this.request(`/shopping/session/${sessionId}/items/${itemId}/aisle`, {
+      method: 'POST', body: JSON.stringify({ aisle }),
+    });
+  }
   endShoppingSession(sessionId: string) {
     return this.request<ShoppingHistory>(`/shopping/session/${sessionId}/end`, { method: 'POST' });
   }
@@ -236,6 +241,31 @@ class ApiClient {
   }
   deleteShoppingHistory(id: string) {
     return this.request(`/shopping/history/${id}`, { method: 'DELETE' });
+  }
+
+  async uploadReceipts(historyId: string, files: FileList | File[]): Promise<ShoppingHistory> {
+    const formData = new FormData();
+    for (const file of Array.from(files)) {
+      formData.append('receipts', file);
+    }
+
+    const headers: Record<string, string> = {};
+    if (this.accessToken) {
+      headers['Authorization'] = `Bearer ${this.accessToken}`;
+    }
+
+    const res = await fetch(`${API_BASE}/shopping/history/${historyId}/receipts`, {
+      method: 'POST',
+      headers,
+      body: formData,
+    });
+
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({ error: 'Upload failed' }));
+      throw new Error(body.error || body.message || `Upload failed (${res.status})`);
+    }
+
+    return res.json();
   }
 
   // === Pricing ===

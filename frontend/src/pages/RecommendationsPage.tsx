@@ -27,6 +27,7 @@ export default function RecommendationsPage() {
   const [selectedProfiles, setSelectedProfiles] = useState<string[]>([]);
   const [selectedCategories, setSelectedCategories] = useState<string[]>([]);
   const [search, setSearch] = useState('');
+  const [filterProfileId, setFilterProfileId] = useState<string>('all');
   const [mealPlanRec, setMealPlanRec] = useState<Recommendation | null>(null);
   const [mealPlanDate, setMealPlanDate] = useState(() => new Date().toISOString().split('T')[0]);
   const [mealPlanType, setMealPlanType] = useState<string>('');
@@ -68,10 +69,11 @@ export default function RecommendationsPage() {
   const addToListMutation = useMutation({
     mutationFn: (rec: Recommendation) => {
       const isPet = rec.profile?.type === 'PET';
-      const isBrandKibble = isPet && rec.itemType === 'brand';
+      const isBrand = rec.itemType === 'brand';
 
-      // Pet brand/kibble: add as a single product item
-      if (isBrandKibble || !rec.ingredients || rec.ingredients.length === 0) {
+      // Brand items (both pet and human): add as a single product
+      // Pet brands especially (kibble, canned food, etc.) should NEVER split into ingredients
+      if (isBrand || (isPet && (!rec.ingredients || rec.ingredients.length === 0))) {
         return api.addShoppingItem({
           itemName: rec.itemName,
           priority: 'MEDIUM',
@@ -80,16 +82,25 @@ export default function RecommendationsPage() {
       }
 
       // Fresh food / recipes: add individual ingredients
-      return api.addIngredientsToList({
-        ingredients: rec.ingredients,
-        mealName: rec.itemName,
-        profileId: rec.profileId,
-      });
+      if (rec.ingredients && rec.ingredients.length > 0) {
+        return api.addIngredientsToList({
+          ingredients: rec.ingredients,
+          mealName: rec.itemName,
+          profileId: rec.profileId,
+        });
+      }
+
+      // Fallback: add the item itself
+      return api.addShoppingItem({
+        itemName: rec.itemName,
+        priority: 'MEDIUM',
+        notes: rec.reason,
+      }).then((item) => [item]);
     },
     onSuccess: (_data, rec) => {
       queryClient.invalidateQueries({ queryKey: ['shoppingList'] });
-      const isPetBrand = rec.profile?.type === 'PET' && rec.itemType === 'brand';
-      if (isPetBrand) {
+      const isBrand = rec.itemType === 'brand';
+      if (isBrand) {
         toast('success', `Added "${rec.itemName}" to shopping list!`);
       } else {
         const count = rec.ingredients?.length || 1;
@@ -106,7 +117,8 @@ export default function RecommendationsPage() {
         date,
         mealType: mealType as any,
         mealName: rec.itemName,
-        ingredients: rec.ingredients,
+        // Brand items (kibble, canned food, etc.) should add as the product title, not ingredients
+        ingredients: rec.itemType === 'brand' ? [] : (rec.ingredients || []),
         preparationNotes: rec.reason,
         calories: rec.nutrition?.calories || null,
       }),
@@ -125,10 +137,12 @@ export default function RecommendationsPage() {
     setMealPlanType(isPet ? 'morning_feed' : (rec.category || 'dinner'));
   };
 
-  const filtered = recommendations?.filter((r) =>
-    r.itemName.toLowerCase().includes(search.toLowerCase()) ||
-    r.reason.toLowerCase().includes(search.toLowerCase())
-  );
+  const filtered = recommendations?.filter((r) => {
+    const matchesSearch = r.itemName.toLowerCase().includes(search.toLowerCase()) ||
+      r.reason.toLowerCase().includes(search.toLowerCase());
+    const matchesProfile = filterProfileId === 'all' || r.profileId === filterProfileId;
+    return matchesSearch && matchesProfile;
+  });
 
   const filterByType = (type: string) =>
     filtered?.filter((r) => type === 'all' || r.itemType === type) || [];
@@ -145,15 +159,44 @@ export default function RecommendationsPage() {
         </Button>
       </div>
 
-      {/* Search */}
-      <div className="relative max-w-sm">
-        <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted" />
-        <input
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          placeholder="Search recommendations..."
-          className="flex h-10 w-full rounded-xl border border-card-border bg-white pl-9 pr-3 py-2 text-sm transition-colors placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary"
-        />
+      {/* Search + Profile filter */}
+      <div className="flex items-center gap-3 flex-wrap">
+        <div className="relative max-w-sm flex-1">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted" />
+          <input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search recommendations..."
+            className="flex h-10 w-full rounded-xl border border-card-border bg-white pl-9 pr-3 py-2 text-sm transition-colors placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary"
+          />
+        </div>
+        <div className="flex items-center gap-1.5 flex-wrap">
+          <button
+            onClick={() => setFilterProfileId('all')}
+            className={cn(
+              'px-3 py-1.5 rounded-xl text-sm font-medium border-2 transition-all',
+              filterProfileId === 'all'
+                ? 'border-primary bg-primary/10 text-primary'
+                : 'border-card-border text-muted hover:border-slate-300'
+            )}
+          >
+            All Profiles
+          </button>
+          {profiles?.map((p) => (
+            <button
+              key={p.id}
+              onClick={() => setFilterProfileId(p.id)}
+              className={cn(
+                'px-3 py-1.5 rounded-xl text-sm font-medium border-2 transition-all',
+                filterProfileId === p.id
+                  ? 'border-primary bg-primary/10 text-primary'
+                  : 'border-card-border text-muted hover:border-slate-300'
+              )}
+            >
+              {p.name}
+            </button>
+          ))}
+        </div>
       </div>
 
       {error ? (

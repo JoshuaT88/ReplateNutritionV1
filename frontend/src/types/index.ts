@@ -26,6 +26,9 @@ export interface UserPreferences {
   firstVisitCompleted: boolean;
   profilePictureUrl: string | null;
   householdType: string | null;
+  mealReminders: boolean;
+  shoppingAlerts: boolean;
+  priceDropAlerts: boolean;
 }
 
 // ============ Profiles ============
@@ -91,7 +94,7 @@ export interface Recommendation {
 }
 
 // ============ Meal Plan ============
-export type MealType = 'breakfast' | 'lunch' | 'dinner' | 'snack' | 'beverage' | 'dessert';
+export type MealType = 'breakfast' | 'lunch' | 'dinner' | 'snack' | 'beverage' | 'dessert' | 'morning_feed' | 'evening_feed' | 'treat_time';
 
 export interface MealPlan {
   id: string;
@@ -102,6 +105,8 @@ export interface MealPlan {
   ingredients: string[];
   preparationNotes: string | null;
   calories: number | null;
+  servings: number | null;
+  prepTime: number | null;
   completed: boolean;
   createdAt: string;
   profile?: { name: string; type: string };
@@ -116,6 +121,7 @@ export interface ShoppingItem {
   itemName: string;
   category: string | null;
   quantity: string | null;
+  estimatedPrice: number | null;
   profileIds: string[];
   checked: boolean;
   priority: ItemPriority;

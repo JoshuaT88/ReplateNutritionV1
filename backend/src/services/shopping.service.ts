@@ -3,6 +3,83 @@ import { Prisma } from '@prisma/client';
 import { AppError } from '../middleware/errorHandler.js';
 import * as aiService from './ai.service.js';
 
+// Hardcoded grocery category lookup to avoid AI calls per ingredient
+const GROCERY_CATEGORY_MAP: Record<string, string[]> = {
+  'Produce': [
+    'apple', 'banana', 'orange', 'lemon', 'lime', 'grape', 'strawberry', 'blueberry', 'raspberry',
+    'blackberry', 'mango', 'pineapple', 'watermelon', 'cantaloupe', 'peach', 'pear', 'plum', 'cherry',
+    'avocado', 'tomato', 'potato', 'sweet potato', 'onion', 'garlic', 'ginger', 'carrot', 'celery',
+    'broccoli', 'cauliflower', 'spinach', 'kale', 'lettuce', 'romaine', 'arugula', 'cabbage', 'cucumber',
+    'zucchini', 'squash', 'bell pepper', 'pepper', 'jalapeno', 'mushroom', 'corn', 'green bean',
+    'asparagus', 'artichoke', 'beet', 'radish', 'turnip', 'parsnip', 'eggplant', 'pea', 'edamame',
+    'cilantro', 'parsley', 'basil', 'mint', 'dill', 'thyme', 'rosemary', 'sage', 'chive', 'scallion',
+    'green onion', 'shallot', 'leek', 'fennel', 'bok choy', 'collard', 'swiss chard',
+  ],
+  'Dairy': [
+    'milk', 'cheese', 'butter', 'yogurt', 'cream', 'sour cream', 'cream cheese', 'cottage cheese',
+    'ricotta', 'mozzarella', 'cheddar', 'parmesan', 'feta', 'gouda', 'brie', 'goat cheese',
+    'whipped cream', 'half and half', 'buttermilk', 'ghee', 'egg', 'eggs',
+  ],
+  'Meat & Seafood': [
+    'chicken', 'beef', 'pork', 'turkey', 'lamb', 'veal', 'bison', 'duck', 'steak', 'ground beef',
+    'ground turkey', 'ground pork', 'bacon', 'sausage', 'ham', 'salami', 'prosciutto', 'pepperoni',
+    'salmon', 'tuna', 'shrimp', 'cod', 'tilapia', 'halibut', 'mahi', 'crab', 'lobster', 'scallop',
+    'clam', 'mussel', 'oyster', 'sardine', 'anchovy', 'trout', 'catfish', 'fish', 'filet mignon',
+    'ribeye', 'sirloin', 'tenderloin', 'chuck', 'brisket', 'ribs', 'wing', 'thigh', 'breast',
+    'drumstick',
+  ],
+  'Pantry': [
+    'rice', 'pasta', 'noodle', 'flour', 'sugar', 'salt', 'oil', 'olive oil', 'coconut oil',
+    'vegetable oil', 'vinegar', 'soy sauce', 'balsamic', 'honey', 'maple syrup', 'molasses',
+    'cereal', 'oat', 'oatmeal', 'granola', 'quinoa', 'couscous', 'barley', 'lentil', 'bean',
+    'chickpea', 'black bean', 'kidney bean', 'pinto bean', 'canned', 'broth', 'stock', 'soup',
+    'tomato sauce', 'tomato paste', 'salsa', 'hot sauce', 'ketchup', 'mustard', 'mayonnaise',
+    'peanut butter', 'almond butter', 'jam', 'jelly', 'nutella', 'chocolate', 'cocoa', 'vanilla',
+    'baking soda', 'baking powder', 'yeast', 'cornstarch', 'breadcrumb', 'crouton', 'nut',
+    'almond', 'walnut', 'pecan', 'cashew', 'peanut', 'pistachio', 'seed', 'chia', 'flax',
+    'sunflower', 'sesame', 'coconut', 'dried fruit', 'raisin', 'cranberry', 'spice', 'cinnamon',
+    'cumin', 'paprika', 'turmeric', 'oregano', 'chili powder', 'curry', 'bay leaf', 'nutmeg',
+    'clove', 'cardamom', 'coriander', 'black pepper', 'red pepper', 'garlic powder', 'onion powder',
+    'tortilla', 'wrap', 'taco shell', 'cracker', 'chip',
+  ],
+  'Bakery': [
+    'bread', 'bagel', 'muffin', 'croissant', 'roll', 'baguette', 'pita', 'naan', 'bun', 'cake',
+    'pie', 'pastry', 'donut', 'cookie', 'brownie', 'scone', 'danish', 'sourdough', 'rye',
+    'brioche', 'english muffin', 'flatbread', 'cornbread',
+  ],
+  'Frozen': [
+    'frozen', 'ice cream', 'popsicle', 'frozen pizza', 'frozen dinner', 'frozen vegetable',
+    'frozen fruit', 'frozen waffle', 'frozen fish', 'frozen chicken', 'sorbet', 'gelato',
+  ],
+  'Beverages': [
+    'juice', 'water', 'soda', 'coffee', 'tea', 'kombucha', 'smoothie', 'lemonade', 'coconut water',
+    'almond milk', 'oat milk', 'soy milk', 'energy drink', 'sparkling water', 'seltzer', 'wine',
+    'beer', 'cider',
+  ],
+  'Snacks': [
+    'chips', 'popcorn', 'pretzel', 'trail mix', 'granola bar', 'protein bar', 'jerky', 'dried',
+    'rice cake', 'fruit snack', 'gummy', 'candy',
+  ],
+  'Condiments': [
+    'dressing', 'ranch', 'marinade', 'bbq sauce', 'teriyaki', 'worcestershire', 'fish sauce',
+    'oyster sauce', 'hoisin', 'sriracha', 'tahini', 'hummus', 'guacamole', 'relish', 'chutney',
+    'pickle', 'olive', 'caper', 'anchovy paste',
+  ],
+  'Pet Food': [
+    'dog food', 'cat food', 'kibble', 'pet treat', 'dog treat', 'cat treat', 'pet food',
+  ],
+};
+
+function categorizeGroceryItem(itemName: string): string {
+  const lower = itemName.toLowerCase();
+  for (const [category, keywords] of Object.entries(GROCERY_CATEGORY_MAP)) {
+    for (const keyword of keywords) {
+      if (lower.includes(keyword)) return category;
+    }
+  }
+  return 'Other';
+}
+
 export async function getShoppingList(userId: string) {
   return prisma.shoppingList.findMany({
     where: { userId },
@@ -11,19 +88,19 @@ export async function getShoppingList(userId: string) {
 }
 
 export async function addShoppingItem(userId: string, data: any) {
-  // Validate item with AI (optional - skip if AI is unavailable)
-  let suggestedCategory: string | undefined;
-  try {
-    const validation = await aiService.validateGroceryItem(data.itemName);
-    if (!validation.isValid) {
-      throw new AppError(400, `"${data.itemName}" doesn't appear to be a grocery item: ${validation.reason}`);
+  // Use hardcoded category first; only call AI for validation if no category provided or found
+  let suggestedCategory = categorizeGroceryItem(data.itemName);
+  if (suggestedCategory === 'Other' && !data.category) {
+    try {
+      const validation = await aiService.validateGroceryItem(data.itemName);
+      if (!validation.isValid) {
+        throw new AppError(400, `"${data.itemName}" doesn't appear to be a grocery item: ${validation.reason}`);
+      }
+      if (validation.suggestedCategory) suggestedCategory = validation.suggestedCategory;
+    } catch (err: any) {
+      if (err instanceof AppError) throw err;
+      console.warn('AI validation skipped:', err.message);
     }
-    suggestedCategory = validation.suggestedCategory;
-  } catch (err: any) {
-    // Only re-throw if it's our own validation error (AppError)
-    if (err instanceof AppError) throw err;
-    // Otherwise skip AI validation (quota exceeded, network error, etc.)
-    console.warn('AI validation skipped:', err.message);
   }
 
   return prisma.shoppingList.create({
@@ -410,6 +487,32 @@ function calculatePriorityFromDate(mealDate: string | undefined): 'LOW' | 'MEDIU
   return 'LOW';
 }
 
+export async function saveAisleLocation(
+  userId: string,
+  sessionId: string,
+  itemId: string,
+  aisleLocation: string
+) {
+  const session = await prisma.shoppingSession.findFirst({
+    where: { id: sessionId, userId },
+  });
+  if (!session) throw new AppError(404, 'Shopping session not found');
+
+  const item = await prisma.shoppingList.findFirst({ where: { id: itemId, userId } });
+  if (!item) throw new AppError(404, 'Item not found');
+
+  const storeName = (session.selectedStore as any)?.name || 'Unknown';
+
+  // Upsert aisle location for this item+store combo
+  await prisma.aisleLocation.upsert({
+    where: { itemName_storeName: { itemName: item.itemName, storeName } },
+    update: { aisleLocation },
+    create: { itemName: item.itemName, storeName, aisleLocation },
+  });
+
+  return { success: true };
+}
+
 export async function addIngredientsToList(
   userId: string,
   data: { ingredients: string[]; mealName: string; mealDate?: string; profileId?: string; category?: string }
@@ -425,14 +528,8 @@ export async function addIngredientsToList(
 
   const created = [];
   for (const ingredient of data.ingredients) {
-    // Let AI assign proper grocery category instead of using meal category
-    let groceryCategory = 'Other';
-    try {
-      const validation = await aiService.validateGroceryItem(ingredient);
-      if (validation.suggestedCategory) groceryCategory = validation.suggestedCategory;
-    } catch {
-      // Skip AI if unavailable
-    }
+    // Use hardcoded category lookup instead of AI
+    const groceryCategory = categorizeGroceryItem(ingredient);
 
     const saved = await prisma.shoppingList.create({
       data: {

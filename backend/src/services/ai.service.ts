@@ -111,16 +111,35 @@ Return JSON with this structure:
   const content = response.choices[0]?.message?.content;
   if (!content) throw new Error('No response from AI');
   const parsed = JSON.parse(content);
-  return parsed.recommendations || [];
+  const recs = parsed.recommendations || [];
+
+  // Post-process: ensure pet kibble/wet_food items that are clearly branded products get itemType 'brand'
+  if (isPet) {
+    for (const rec of recs) {
+      if (rec.category === 'kibble' || rec.category === 'wet_food') {
+        rec.itemType = 'brand';
+        rec.ingredients = [];
+      }
+      if (rec.itemType === 'brand') {
+        rec.ingredients = [];
+      }
+    }
+  }
+
+  return recs;
 }
 
 export async function generateMeals(
   profiles: ProfileContext[],
-  date: string,
+  dates: string | string[],
   mealTypes: string[],
   recentMeals: string[]
 ): Promise<any[]> {
   const profilesText = profiles.map(buildProfileConstraints).join('\n\n');
+  const dateList = Array.isArray(dates) ? dates : [dates];
+  const datesText = dateList.length === 1
+    ? `for ${dateList[0]}`
+    : `for EACH of these dates: ${dateList.join(', ')}`;
 
   const response = await openai.chat.completions.create({
     model: 'gpt-4o',
@@ -129,20 +148,22 @@ export async function generateMeals(
       { role: 'system', content: SYSTEM_PROMPT },
       {
         role: 'user',
-        content: `Generate meal suggestions for ${date}.
+        content: `Generate meal suggestions ${datesText}.
 
 Profiles:
 ${profilesText}
 
-Meal types needed: ${mealTypes.join(', ')}
+Meal types needed per day per profile: ${mealTypes.join(', ')}
 
+${dateList.length > 1 ? `CRITICAL: You MUST generate meals for EVERY date listed. Each profile needs ALL meal types for EACH day. Every meal object MUST include a "date" field set to the YYYY-MM-DD it belongs to. Do NOT put all meals on one date.\n` : ''}
 Recent meals to AVOID repeating: ${recentMeals.length ? recentMeals.join(', ') : 'None'}
 
 Return JSON:
 {
   "meals": [
     {
-      "profileName": "string",
+      "profileName": "string (must match a profile name exactly)",
+      "date": "YYYY-MM-DD (must be one of the dates listed above)",
       "mealType": "breakfast" | "lunch" | "dinner" | "snack",
       "mealName": "string",
       "ingredients": ["string"],
@@ -150,11 +171,13 @@ Return JSON:
       "calories": number
     }
   ]
-}`,
+}
+
+${dateList.length > 1 ? `Expected total: approximately ${dateList.length * profiles.length * mealTypes.length} meals (${dateList.length} days × ${profiles.length} profiles × ${mealTypes.length} meal types).` : ''}`,
       },
     ],
     temperature: 0.8,
-    max_tokens: 3000,
+    max_tokens: Math.min(16384, dateList.length * profiles.length * mealTypes.length * 150 + 500),
   });
 
   const content = response.choices[0]?.message?.content;
@@ -221,9 +244,16 @@ export async function findNearbyStores(
       { role: 'system', content: SYSTEM_PROMPT },
       {
         role: 'user',
-        content: `Find grocery stores near ZIP code ${zipCode} and estimate the total cost of this shopping list at each store. 
+        content: `Find ALL grocery stores within an 8-10 mile radius of ZIP code ${zipCode} and estimate the total cost of this shopping list at each store. 
 
-IMPORTANT: Calculate totals by multiplying each item's unit price by its quantity. For example, "16 filet mignons" at ~$14/each = $224, NOT $14.
+IMPORTANT: 
+- Include ALL major grocery stores within 8-10 miles (at least 6-10 stores).
+- Include budget stores (Walmart, Aldi, Lidl, Dollar General), mid-range (Kroger, Publix, HEB, Safeway, Meijer, Food Lion), and premium (Whole Foods, Trader Joe's, Sprouts, Fresh Market).
+- Also include warehouse clubs (Costco, Sam's Club, BJ's) if nearby.
+- DO NOT limit to just the same ZIP code — include surrounding areas within the 8-10 mile radius.
+- Calculate totals by multiplying each item's unit price by its quantity. For example, "16 cream cheese" at ~$2/each = $32, NOT $2.
+- Prices entered by users are TOTAL price (not per-unit), so keep item-level prices as the total paid.
+- Sort by estimated total (cheapest first).
 
 Shopping list:
 ${itemList}

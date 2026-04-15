@@ -27,8 +27,8 @@ router.post('/', async (req: AuthRequest, res: Response, next: NextFunction) => 
 
 router.post('/generate', async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
-    const { profileIds, date, mealTypes } = req.body;
-    const meals = await mealPlanService.generateMealPlan(req.user!.userId, profileIds, date, mealTypes);
+    const { profileIds, date, mealTypes, days } = req.body;
+    const meals = await mealPlanService.generateMealPlan(req.user!.userId, profileIds, date, mealTypes, days || 7);
     res.status(201).json(meals);
   } catch (err) { next(err); }
 });

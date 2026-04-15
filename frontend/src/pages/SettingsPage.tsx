@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   User, Shield, Bell, Database, Info, LogOut, Trash2, Download,
-  Lock, Mail, MapPin, Loader2, ChevronRight, Moon, Sun
+  Lock, Loader2, ChevronRight
 } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { api } from '@/lib/api';
@@ -80,7 +80,7 @@ export default function SettingsPage() {
         <div className="space-y-3">
           <div className="flex items-center justify-between py-2">
             <div>
-              <p className="text-sm font-medium">{user?.name || 'Your Name'}</p>
+              <p className="text-sm font-medium">{user?.fullName || 'Your Name'}</p>
               <p className="text-xs text-muted">{user?.email}</p>
             </div>
           </div>
@@ -97,10 +97,10 @@ export default function SettingsPage() {
               }}
             />
           </SettingsRow>
-          <SettingsRow label="Weekly Budget" value={preferences?.budget ? `$${preferences.budget}` : 'Not set'}>
+          <SettingsRow label="Monthly Budget" value={preferences?.budget ? `$${preferences.budget}` : 'Not set'}>
             <Input
               type="number"
-              placeholder="150"
+              placeholder="400"
               defaultValue={preferences?.budget || ''}
               className="w-24"
               onBlur={(e) => {

@@ -9,7 +9,7 @@ import {
 import { api } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { Card, CardContent } from '@/components/ui/card';
+import { Card } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
 import { EmptyState } from '@/components/shared/EmptyState';
@@ -32,12 +32,17 @@ export default function ShoppingPage() {
   const [showAddItem, setShowAddItem] = useState(false);
   const [showGenerateFromMeals, setShowGenerateFromMeals] = useState(false);
   const [showStoreFinder, setShowStoreFinder] = useState(false);
+  const [showBudgetWarning, setShowBudgetWarning] = useState(false);
+  const [pendingStoreName, setPendingStoreName] = useState<string | undefined>(undefined);
   const [selectedStoreIdx, setSelectedStoreIdx] = useState<number | null>(null);
   const [newItemName, setNewItemName] = useState('');
   const [newItemQty, setNewItemQty] = useState('1');
   const [newItemCategory, setNewItemCategory] = useState('');
   const [newItemPriority, setNewItemPriority] = useState<'LOW' | 'MEDIUM' | 'HIGH'>('MEDIUM');
+  const [newItemMeal, setNewItemMeal] = useState('');
   const [search, setSearch] = useState('');
+  const [storeSearch, setStoreSearch] = useState('');
+  const [customStoreAddress, setCustomStoreAddress] = useState('');
   const [zipCode, setZipCode] = useState('');
 
   const { data: shoppingList, isLoading, error, refetch } = useQuery({
@@ -50,6 +55,16 @@ export default function ShoppingPage() {
     queryFn: () => api.getProfiles(),
   });
 
+  const { data: preferences } = useQuery({
+    queryKey: ['preferences'],
+    queryFn: () => api.getPreferences(),
+  });
+
+  const { data: mealPlans } = useQuery({
+    queryKey: ['mealPlans'],
+    queryFn: () => api.getMealPlans(),
+  });
+
   const { data: stores, isFetching: storesFetching } = useQuery({
     queryKey: ['stores', zipCode],
     queryFn: () => api.findStores(zipCode),
@@ -60,8 +75,9 @@ export default function ShoppingPage() {
     mutationFn: () => api.addShoppingItem({
       itemName: newItemName,
       quantity: parseInt(newItemQty) as any,
-      category: newItemCategory,
+      category: newItemCategory || undefined,
       priority: newItemPriority,
+      sourceRef: newItemMeal || undefined,
     }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['shoppingList'] });
@@ -69,6 +85,7 @@ export default function ShoppingPage() {
       setNewItemQty('1');
       setNewItemCategory('');
       setNewItemPriority('MEDIUM');
+      setNewItemMeal('');
       setShowAddItem(false);
       toast('success', 'Item added');
     },
@@ -111,6 +128,18 @@ export default function ShoppingPage() {
     onError: (err: Error) => toast('error', 'Failed to start session', err.message),
   });
 
+  const tryStartSession = (storeName?: string, storeEstimate?: number) => {
+    const monthlyBudget = preferences?.budget || 0;
+    // Use store estimate if provided, else use list-level estimate, else rough guess ($5/item)
+    const estimate = storeEstimate || totalEstimate || (items.length * 5);
+    if (monthlyBudget > 0 && estimate > monthlyBudget) {
+      setPendingStoreName(storeName);
+      setShowBudgetWarning(true);
+    } else {
+      startSessionMutation.mutate(storeName);
+    }
+  };
+
   const items = shoppingList || [];
   const filtered = items.filter((item) =>
     item.itemName.toLowerCase().includes(search.toLowerCase())
@@ -124,7 +153,7 @@ export default function ShoppingPage() {
     return acc;
   }, {});
 
-  const totalEstimate = items.reduce((sum, i) => sum + (i.estimatedPrice || 0) * (i.quantity || 1), 0);
+  const totalEstimate = items.reduce((sum, i) => sum + (i.estimatedPrice || 0), 0);
 
   return (
     <div className="space-y-6">
@@ -148,7 +177,7 @@ export default function ShoppingPage() {
             <Plus className="h-4 w-4" /> Add Item
           </Button>
           <Button
-            onClick={() => startSessionMutation.mutate()}
+            onClick={() => tryStartSession()}
             disabled={items.length === 0 || startSessionMutation.isPending}
           >
             <PlayCircle className="h-4 w-4" /> Start Shopping
@@ -222,12 +251,33 @@ export default function ShoppingPage() {
                 value={newItemQty}
                 onChange={(e) => setNewItemQty(e.target.value)}
               />
-              <Input
-                placeholder="Category (optional)"
+              <select
                 value={newItemCategory}
                 onChange={(e) => setNewItemCategory(e.target.value)}
-              />
+                className="flex h-10 w-full rounded-xl border border-card-border bg-white px-3 py-2 text-sm transition-colors focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary"
+              >
+                <option value="">Category (auto)</option>
+                {['Produce', 'Dairy', 'Meat & Seafood', 'Pantry', 'Bakery', 'Frozen', 'Beverages', 'Snacks', 'Condiments', 'Pet Food', 'Other'].map((cat) => (
+                  <option key={cat} value={cat}>{cat}</option>
+                ))}
+              </select>
             </div>
+            {/* Optional meal association */}
+            {mealPlans && mealPlans.length > 0 && (
+              <div>
+                <label className="text-xs font-medium text-muted block mb-1">For meal (optional)</label>
+                <select
+                  value={newItemMeal}
+                  onChange={(e) => setNewItemMeal(e.target.value)}
+                  className="flex h-10 w-full rounded-xl border border-card-border bg-white px-3 py-2 text-sm transition-colors focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary"
+                >
+                  <option value="">No meal</option>
+                  {[...new Set(mealPlans.map((m: any) => m.mealName))].slice(0, 20).map((name: string) => (
+                    <option key={name} value={name}>{name}</option>
+                  ))}
+                </select>
+              </div>
+            )}
             <div>
               <p className="text-xs font-medium text-muted mb-1.5">Priority</p>
               <div className="flex gap-2">
@@ -299,14 +349,25 @@ export default function ShoppingPage() {
             </div>
 
             {stores && stores.length > 0 && (
-              <div className="space-y-2">
-                {stores.map((store: any, idx: number) => (
+              <>
+                <Input
+                  placeholder="Search or enter store name..."
+                  value={storeSearch}
+                  onChange={(e) => setStoreSearch(e.target.value)}
+                  className="text-sm"
+                />
+                <div className="space-y-2">
+                  {stores
+                    .filter((s: any) => !storeSearch || s.name.toLowerCase().includes(storeSearch.toLowerCase()))
+                    .map((store: any, idx: number) => {
+                      const realIdx = stores.indexOf(store);
+                      return (
                   <div key={store.placeId || store.name} className="rounded-xl border border-card-border overflow-hidden">
                     <button
-                      onClick={() => setSelectedStoreIdx(selectedStoreIdx === idx ? null : idx)}
+                      onClick={() => setSelectedStoreIdx(selectedStoreIdx === realIdx ? null : realIdx)}
                       className={cn(
                         'w-full text-left p-3 transition-all',
-                        selectedStoreIdx === idx ? 'bg-primary/5 border-b border-card-border' : 'hover:bg-primary/5'
+                        selectedStoreIdx === realIdx ? 'bg-primary/5 border-b border-card-border' : 'hover:bg-primary/5'
                       )}
                     >
                       <div className="flex items-center justify-between">
@@ -363,9 +424,9 @@ export default function ShoppingPage() {
                               className="w-full mt-2"
                               size="sm"
                               onClick={() => {
-                                startSessionMutation.mutate(store.name);
                                 setShowStoreFinder(false);
                                 setSelectedStoreIdx(null);
+                                tryStartSession(store.name, store.estimatedTotal);
                               }}
                               disabled={startSessionMutation.isPending}
                             >
@@ -379,14 +440,93 @@ export default function ShoppingPage() {
                       )}
                     </AnimatePresence>
                   </div>
-                ))}
-              </div>
+                      );
+                    })}
+
+                  {/* Custom store option if search doesn't match */}
+                  {storeSearch && !stores.some((s: any) => s.name.toLowerCase().includes(storeSearch.toLowerCase())) && (
+                    <div className="rounded-xl border border-dashed border-card-border p-3 space-y-2">
+                      <p className="text-sm text-muted">"{storeSearch}" not in list</p>
+                      <Input
+                        placeholder="Store address (optional, for future reference)"
+                        value={customStoreAddress}
+                        onChange={(e) => setCustomStoreAddress(e.target.value)}
+                        className="text-sm"
+                      />
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="w-full"
+                        onClick={() => {
+                          setShowStoreFinder(false);
+                          setSelectedStoreIdx(null);
+                          setCustomStoreAddress('');
+                          tryStartSession(storeSearch);
+                        }}
+                        disabled={startSessionMutation.isPending}
+                      >
+                        <PlayCircle className="h-3.5 w-3.5" /> Start Shopping at {storeSearch}
+                      </Button>
+                    </div>
+                  )}
+                </div>
+              </>
             )}
 
             {stores && stores.length === 0 && (
               <p className="text-sm text-muted text-center py-4">No stores found near this ZIP code.</p>
             )}
           </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Budget Warning Dialog */}
+      <Dialog open={showBudgetWarning} onOpenChange={setShowBudgetWarning}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <AlertTriangle className="h-5 w-5 text-amber-500" /> Budget Exceeded
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3 my-4">
+            <p className="text-sm text-muted">
+              Your shopping list estimate ({formatCurrency(totalEstimate || items.length * 5)}) exceeds your monthly budget
+              of {formatCurrency(preferences?.budget || 0)}.
+            </p>
+            <div className="rounded-xl bg-amber-50 border border-amber-200 p-3">
+              <p className="text-xs font-medium text-amber-800">
+                You can filter to only high-priority items, or continue with your full list.
+              </p>
+            </div>
+          </div>
+          <DialogFooter className="flex-col sm:flex-row gap-2">
+            <Button
+              variant="outline"
+              onClick={() => {
+                // Filter to HIGH priority items only
+                items.forEach((item) => {
+                  if (item.priority !== 'HIGH') {
+                    removeItemMutation.mutate(item.id);
+                  }
+                });
+                setShowBudgetWarning(false);
+                toast('success', 'Filtered to high-priority items');
+              }}
+            >
+              Focus on High Priority
+            </Button>
+            <Button
+              onClick={() => {
+                setShowBudgetWarning(false);
+                startSessionMutation.mutate(pendingStoreName);
+              }}
+              disabled={startSessionMutation.isPending}
+            >
+              {startSessionMutation.isPending
+                ? <Loader2 className="h-4 w-4 animate-spin" />
+                : 'Continue Full List'}
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
     </div>

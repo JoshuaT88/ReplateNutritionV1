@@ -90,6 +90,16 @@ router.post('/session/:sessionId/items/:itemId/price', async (req: AuthRequest, 
   } catch (err) { next(err); }
 });
 
+router.post('/session/:sessionId/items/:itemId/aisle', async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const { aisle } = req.body;
+    const result = await shoppingService.saveAisleLocation(
+      req.user!.userId, req.params.sessionId, req.params.itemId, aisle
+    );
+    res.json(result);
+  } catch (err) { next(err); }
+});
+
 router.post('/session/:sessionId/end', async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     const history = await shoppingService.endShoppingSession(req.user!.userId, req.params.sessionId);
