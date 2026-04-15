@@ -1,6 +1,7 @@
 import { Router, Response, NextFunction } from 'express';
 import { authenticate, AuthRequest } from '../middleware/auth.js';
 import * as recService from '../services/recommendation.service.js';
+import { firstParam } from '../utils/http.js';
 
 const router = Router();
 router.use(authenticate);
@@ -23,14 +24,16 @@ router.post('/generate', async (req: AuthRequest, res: Response, next: NextFunct
 
 router.put('/:id', async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
-    const rec = await recService.updateRecommendation(req.user!.userId, req.params.id, req.body);
+    const recommendationId = firstParam(req.params.id);
+    const rec = await recService.updateRecommendation(req.user!.userId, recommendationId!, req.body);
     res.json(rec);
   } catch (err) { next(err); }
 });
 
 router.delete('/:id', async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
-    await recService.deleteRecommendation(req.user!.userId, req.params.id);
+    const recommendationId = firstParam(req.params.id);
+    await recService.deleteRecommendation(req.user!.userId, recommendationId!);
     res.json({ success: true });
   } catch (err) { next(err); }
 });

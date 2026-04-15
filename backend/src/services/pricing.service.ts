@@ -1,4 +1,5 @@
 import prisma from '../config/database.js';
+import { AppError } from '../middleware/errorHandler.js';
 
 export async function submitPrice(userId: string, data: {
   itemName: string;
@@ -8,7 +9,34 @@ export async function submitPrice(userId: string, data: {
   quantity?: number;
   unit?: string;
 }) {
-  return prisma.priceSubmission.create({
+  if (data.actualPrice < 0 || data.actualPrice > 9999) {
+    throw new AppError(400, 'Price must be between $0 and $9,999');
+  }
+
+  // Outlier detection against existing average
+  const existing = await prisma.storeItemAverage.findUnique({
+    where: {
+      itemName_storeName_zipRegion: {
+        itemName: data.itemName,
+        storeName: data.storeName,
+        zipRegion: data.zipRegion,
+      },
+    },
+  });
+
+  let flaggedOutlier = false;
+  if (existing && existing.submissionCount >= 3) {
+    const ratio = data.actualPrice / existing.avgPrice;
+    if (ratio > 5 || ratio < 0.2) {
+      flaggedOutlier = true;
+    }
+  }
+
+  if (flaggedOutlier) {
+    return { flaggedOutlier: true, submitted: false };
+  }
+
+  const submission = await prisma.priceSubmission.create({
     data: {
       userId,
       itemName: data.itemName,
@@ -19,6 +47,8 @@ export async function submitPrice(userId: string, data: {
       unit: data.unit,
     },
   });
+
+  return { ...submission, flaggedOutlier: false };
 }
 
 export async function getEstimate(itemName: string, storeName: string, zipRegion: string) {
@@ -70,6 +100,8 @@ export async function aggregatePrices() {
     groups.get(key)!.push(sub);
   }
 
+  const priceDrops: { itemName: string; storeName: string; zipRegion: string; oldPrice: number; newPrice: number }[] = [];
+
   for (const [, subs] of groups) {
     if (subs.length === 0) continue;
 
@@ -84,13 +116,26 @@ export async function aggregatePrices() {
       weightTotal += weight;
     }
 
-    const avgPrice = weightedSum / weightTotal;
+    const avgPrice = Math.round((weightedSum / weightTotal) * 100) / 100;
     const { itemName, storeName, zipRegion } = subs[0];
+
+    // Get the current average to save as previousAvgPrice
+    const existing = await prisma.storeItemAverage.findUnique({
+      where: { itemName_storeName_zipRegion: { itemName, storeName, zipRegion } },
+    });
+
+    const previousAvgPrice = existing?.avgPrice ?? null;
+
+    // Track significant drops (>10% decrease with enough data)
+    if (previousAvgPrice && subs.length >= 3 && avgPrice < previousAvgPrice * 0.9) {
+      priceDrops.push({ itemName, storeName, zipRegion, oldPrice: previousAvgPrice, newPrice: avgPrice });
+    }
 
     await prisma.storeItemAverage.upsert({
       where: { itemName_storeName_zipRegion: { itemName, storeName, zipRegion } },
       update: {
-        avgPrice: Math.round(avgPrice * 100) / 100,
+        avgPrice,
+        previousAvgPrice,
         submissionCount: subs.length,
         lastUpdated: new Date(),
       },
@@ -98,7 +143,8 @@ export async function aggregatePrices() {
         itemName,
         storeName,
         zipRegion,
-        avgPrice: Math.round(avgPrice * 100) / 100,
+        avgPrice,
+        previousAvgPrice: null,
         submissionCount: subs.length,
       },
     });
@@ -109,5 +155,5 @@ export async function aggregatePrices() {
     where: { submittedAt: { lt: ninetyDaysAgo } },
   });
 
-  return { groupsProcessed: groups.size };
+  return { groupsProcessed: groups.size, priceDrops };
 }

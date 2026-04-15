@@ -88,6 +88,8 @@ export default function ShoppingSessionPage() {
   const endSessionMutation = useMutation({
     mutationFn: () => api.endShoppingSession(sessionId!),
     onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['shoppingHistory'] });
+      queryClient.invalidateQueries({ queryKey: ['shoppingList'] });
       toast('success', 'Shopping session completed!');
       navigate('/shopping/history');
     },
@@ -250,7 +252,7 @@ export default function ShoppingSessionPage() {
                   <div
                     key={item.id}
                     className={cn(
-                      'flex items-center gap-2 py-1.5 px-1.5 rounded-lg transition-all group cursor-pointer',
+                      'flex items-center gap-2 py-1.5 px-1.5 rounded-lg transition-all group',
                       isDone ? 'opacity-50' : 'hover:bg-slate-50'
                     )}
                   >
@@ -278,7 +280,7 @@ export default function ShoppingSessionPage() {
                       <span className="text-[9px] text-muted shrink-0">{item.quantity}</span>
                     )}
                     {!isDone && (
-                      <div className="hidden group-hover:flex items-center gap-0.5 shrink-0">
+                      <div className="flex items-center gap-0.5 shrink-0">
                         <button onClick={() => updateStatusMutation.mutate({ itemId: item.id, status: 'OUT_OF_STOCK' })}
                           className="p-0.5 rounded text-slate-400 hover:text-slate-600" title="Out of Stock">
                           <X className="h-3 w-3" />
@@ -287,7 +289,17 @@ export default function ShoppingSessionPage() {
                           className="p-0.5 rounded text-amber-400 hover:text-amber-600" title="Too Expensive">
                           <DollarSign className="h-3 w-3" />
                         </button>
+                        <button onClick={() => updateStatusMutation.mutate({ itemId: item.id, status: 'SKIPPED' })}
+                          className="p-0.5 rounded text-slate-400 hover:text-slate-600" title="Skip">
+                          <AlertTriangle className="h-3 w-3" />
+                        </button>
                       </div>
+                    )}
+                    {isDone && !isPickedUp && (
+                      <Badge variant="outline" className="text-[8px] px-1 py-0 shrink-0">
+                        {item.status === 'OUT_OF_STOCK' ? 'OOS' :
+                         item.status === 'TOO_EXPENSIVE' ? '$$$' : 'Skip'}
+                      </Badge>
                     )}
                   </div>
                 );
@@ -497,7 +509,7 @@ export default function ShoppingSessionPage() {
       )}
 
       {/* Picked up (collapsible) */}
-      {pickedUp.length > 0 && !showReview && viewMode === 'list' && (
+      {pickedUp.length > 0 && !showReview && (viewMode === 'list' || viewMode === 'checklist') && (
         <div className="space-y-2">
           <p className="text-[10px] uppercase tracking-wider font-semibold text-emerald-600 px-1">
             Picked Up ({pickedUp.length})
@@ -546,7 +558,7 @@ export default function ShoppingSessionPage() {
       )}
 
       {/* Skipped (collapsible) */}
-      {skipped.length > 0 && !showReview && viewMode === 'list' && (
+      {skipped.length > 0 && !showReview && (viewMode === 'list' || viewMode === 'checklist') && (
         <div className="space-y-2">
           <p className="text-[10px] uppercase tracking-wider font-semibold text-slate-400 px-1">
             Skipped / Unavailable ({skipped.length})

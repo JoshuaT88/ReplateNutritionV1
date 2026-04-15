@@ -3,7 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   History, ShoppingCart, MapPin, Clock, DollarSign, ChevronDown,
-  Check, X, TrendingUp, TrendingDown, Minus, Upload
+  Check, X, TrendingUp, TrendingDown, Minus, Upload, ScanLine
 } from 'lucide-react';
 import { api } from '@/lib/api';
 import { Badge } from '@/components/ui/badge';
@@ -92,12 +92,14 @@ export default function ShoppingHistoryPage() {
 function TripCard({ trip }: { trip: any }) {
   const [expanded, setExpanded] = useState(false);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [scanResult, setScanResult] = useState<any>(null);
   const queryClient = useQueryClient();
   const { toast } = useToast();
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const scanInputRef = useRef<HTMLInputElement>(null);
 
   const uploadMutation = useMutation({
-    mutationFn: (files: FileList) => api.uploadReceipts(trip.id, files),
+    mutationFn: (files: File[]) => api.uploadReceipts(trip.id, files),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['shoppingHistory'] });
       toast('success', 'Receipt uploaded!');
@@ -105,10 +107,20 @@ function TripCard({ trip }: { trip: any }) {
     onError: (err: Error) => toast('error', 'Upload failed', err.message),
   });
 
+  const scanMutation = useMutation({
+    mutationFn: (file: File) => api.scanReceipt(trip.id, file),
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ['shoppingHistory'] });
+      setScanResult(data);
+      toast('success', 'Receipt scanned!', `${data.items.length} items extracted, ${data.pricesSubmitted} prices submitted`);
+    },
+    onError: (err: Error) => toast('error', 'Scan failed', err.message),
+  });
+
   // Build unified items array from the separate JSON arrays
-  const pickedUp = ((trip.itemsPickedUp as any[]) || []).map((i: any) => ({ ...i, status: 'PICKED_UP' }));
-  const outOfStock = ((trip.itemsOutOfStock as any[]) || []).map((i: any) => ({ ...i, status: 'OUT_OF_STOCK' }));
-  const tooExpensive = ((trip.itemsTooExpensive as any[]) || []).map((i: any) => ({ ...i, status: 'TOO_EXPENSIVE' }));
+  const pickedUp = ((trip.itemsPickedUp as any[]) || []).map((i: any, idx: number) => ({ ...i, _key: `pu-${idx}`, status: 'PICKED_UP' }));
+  const outOfStock = ((trip.itemsOutOfStock as any[]) || []).map((i: any, idx: number) => ({ ...i, _key: `oos-${idx}`, status: 'OUT_OF_STOCK' }));
+  const tooExpensive = ((trip.itemsTooExpensive as any[]) || []).map((i: any, idx: number) => ({ ...i, _key: `exp-${idx}`, status: 'TOO_EXPENSIVE' }));
   const allItems = [...pickedUp, ...outOfStock, ...tooExpensive];
 
   const savingsEstimate = allItems.reduce((sum: number, i: any) => {
@@ -197,7 +209,7 @@ function TripCard({ trip }: { trip: any }) {
               <div className="space-y-1">
                 {allItems.map((item: any) => (
                   <div
-                    key={item.id}
+                    key={item._key}
                     className={cn(
                       'flex items-center gap-2 px-3 py-2 rounded-lg text-sm',
                       item.status === 'PICKED_UP' ? 'bg-emerald-50' :
@@ -238,17 +250,30 @@ function TripCard({ trip }: { trip: any }) {
               <div className="pt-2 border-t border-slate-100">
                 <div className="flex items-center justify-between mb-2">
                   <p className="text-xs font-semibold text-foreground">Receipt Photos</p>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="text-xs"
-                    onClick={() => fileInputRef.current?.click()}
-                    disabled={uploadMutation.isPending}
-                  >
-                    {uploadMutation.isPending
-                      ? <><span className="animate-spin">⏳</span> Uploading...</>
-                      : <><Upload className="h-3.5 w-3.5" /> Upload Receipt</>}
-                  </Button>
+                  <div className="flex gap-1.5">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="text-xs"
+                      onClick={() => scanInputRef.current?.click()}
+                      disabled={scanMutation.isPending}
+                    >
+                      {scanMutation.isPending
+                        ? <><span className="animate-spin">⏳</span> Scanning...</>
+                        : <><ScanLine className="h-3.5 w-3.5" /> Scan Receipt</>}
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="text-xs"
+                      onClick={() => fileInputRef.current?.click()}
+                      disabled={uploadMutation.isPending}
+                    >
+                      {uploadMutation.isPending
+                        ? <><span className="animate-spin">⏳</span> Uploading...</>
+                        : <><Upload className="h-3.5 w-3.5" /> Upload</>}
+                    </Button>
+                  </div>
                 </div>
                 {Array.isArray(trip.receiptUrls) && trip.receiptUrls.length > 0 && (
                   <div className="flex gap-3 flex-wrap">
@@ -278,16 +303,62 @@ function TripCard({ trip }: { trip: any }) {
                 <input
                   ref={fileInputRef}
                   type="file"
-                  accept="image/jpeg,image/png,image/webp,image/heic"
+                  accept="image/jpeg,image/png,image/webp,image/heic,image/heif"
                   multiple
                   className="hidden"
                   onChange={(e) => {
                     if (e.target.files && e.target.files.length > 0) {
-                      uploadMutation.mutate(e.target.files);
+                      const files = Array.from(e.target.files);
                       e.target.value = '';
+                      uploadMutation.mutate(files);
                     }
                   }}
                 />
+                <input
+                  ref={scanInputRef}
+                  type="file"
+                  accept="image/jpeg,image/png,image/webp,image/heic,image/heif"
+                  className="hidden"
+                  onChange={(e) => {
+                    if (e.target.files && e.target.files.length > 0) {
+                      const file = e.target.files[0];
+                      e.target.value = '';
+                      scanMutation.mutate(file);
+                    }
+                  }}
+                />
+
+                {/* Scan results */}
+                {scanResult && (
+                  <div className="mt-3 p-3 rounded-xl bg-blue-50 border border-blue-200 space-y-2">
+                    <div className="flex items-center justify-between">
+                      <p className="text-xs font-semibold text-blue-900">Scanned Items</p>
+                      <button onClick={() => setScanResult(null)} className="text-blue-400 hover:text-blue-600">
+                        <X className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
+                    {scanResult.storeName && (
+                      <p className="text-[11px] text-blue-700">Store: {scanResult.storeName}</p>
+                    )}
+                    <div className="space-y-1 max-h-40 overflow-y-auto">
+                      {scanResult.items.map((item: any, i: number) => (
+                        <div key={i} className="flex justify-between text-xs text-blue-900">
+                          <span>{item.itemName}{item.quantity > 1 ? ` ×${item.quantity}` : ''}</span>
+                          <span className="font-mono">${item.price.toFixed(2)}</span>
+                        </div>
+                      ))}
+                    </div>
+                    {scanResult.total && (
+                      <div className="flex justify-between text-xs font-semibold text-blue-900 pt-1 border-t border-blue-200">
+                        <span>Total</span>
+                        <span className="font-mono">${scanResult.total.toFixed(2)}</span>
+                      </div>
+                    )}
+                    <p className="text-[10px] text-blue-600">
+                      {scanResult.pricesSubmitted} price{scanResult.pricesSubmitted !== 1 ? 's' : ''} submitted to crowd-sourced database
+                    </p>
+                  </div>
+                )}
               </div>
             </div>
           </motion.div>

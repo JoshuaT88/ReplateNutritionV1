@@ -1,4 +1,4 @@
-import type { AuthResponse, User, UserPreferences, Profile, ProfileFormData, Recommendation, MealPlan, ShoppingItem, ShoppingHistory, ShoppingSession, StoreResult } from '@/types';
+import type { AuthResponse, User, UserPreferences, Profile, ProfileFormData, Recommendation, MealPlan, ShoppingItem, ShoppingHistory, ShoppingSession, StoreResult, ReceiptOcrResult } from '@/types';
 
 const API_BASE = '/api';
 
@@ -118,6 +118,11 @@ class ApiClient {
       method: 'PUT', body: JSON.stringify(data),
     });
   }
+  sendTestNotificationEmail() {
+    return this.request<{ success: boolean }>('/users/me/preferences/test-email', {
+      method: 'POST',
+    });
+  }
 
   // === Profiles ===
   getProfiles() { return this.request<Profile[]>('/profiles'); }
@@ -159,9 +164,9 @@ class ApiClient {
   createMealPlan(data: Partial<MealPlan>) {
     return this.request<MealPlan>('/meal-plan', { method: 'POST', body: JSON.stringify(data) });
   }
-  generateMealPlan(profileIds: string[], date: string, mealTypes: string[], days: number = 7) {
+  generateMealPlan(profileIds: string[], date: string, mealTypes: string[], days: number = 7, dietaryGoals?: string) {
     return this.request<MealPlan[]>('/meal-plan/generate', {
-      method: 'POST', body: JSON.stringify({ profileIds, date, mealTypes, days }),
+      method: 'POST', body: JSON.stringify({ profileIds, date, mealTypes, days, dietaryGoals }),
     });
   }
   updateMealPlan(id: string, data: Partial<MealPlan>) {
@@ -249,20 +254,76 @@ class ApiClient {
       formData.append('receipts', file);
     }
 
-    const headers: Record<string, string> = {};
-    if (this.accessToken) {
-      headers['Authorization'] = `Bearer ${this.accessToken}`;
+    const doUpload = async () => {
+      const headers: Record<string, string> = {};
+      if (this.accessToken) {
+        headers['Authorization'] = `Bearer ${this.accessToken}`;
+      }
+      return fetch(`${API_BASE}/shopping/history/${historyId}/receipts`, {
+        method: 'POST',
+        headers,
+        body: formData,
+      });
+    };
+
+    let res = await doUpload();
+
+    // Handle token refresh for expired sessions
+    if (res.status === 401 && this.refreshToken) {
+      const refreshed = await this.tryRefresh();
+      if (refreshed) {
+        res = await doUpload();
+      }
     }
 
-    const res = await fetch(`${API_BASE}/shopping/history/${historyId}/receipts`, {
-      method: 'POST',
-      headers,
-      body: formData,
-    });
+    if (res.status === 401) {
+      this.clearTokens();
+      this.onUnauthorized?.();
+      throw new Error('Session expired');
+    }
 
     if (!res.ok) {
       const body = await res.json().catch(() => ({ error: 'Upload failed' }));
       throw new Error(body.error || body.message || `Upload failed (${res.status})`);
+    }
+
+    return res.json();
+  }
+
+  async scanReceipt(historyId: string, file: File): Promise<ReceiptOcrResult> {
+    const formData = new FormData();
+    formData.append('receipt', file);
+
+    const doUpload = async () => {
+      const headers: Record<string, string> = {};
+      if (this.accessToken) {
+        headers['Authorization'] = `Bearer ${this.accessToken}`;
+      }
+      return fetch(`${API_BASE}/shopping/history/${historyId}/receipts/scan`, {
+        method: 'POST',
+        headers,
+        body: formData,
+      });
+    };
+
+    let res = await doUpload();
+
+    if (res.status === 401 && this.refreshToken) {
+      const refreshed = await this.tryRefresh();
+      if (refreshed) {
+        res = await doUpload();
+      }
+    }
+
+    if (res.status === 401) {
+      this.clearTokens();
+      this.onUnauthorized?.();
+      throw new Error('Session expired');
+    }
+
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({ error: 'Scan failed' }));
+      throw new Error(body.error || body.message || `Scan failed (${res.status})`);
     }
 
     return res.json();

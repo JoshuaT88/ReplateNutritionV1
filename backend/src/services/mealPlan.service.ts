@@ -29,7 +29,8 @@ export async function generateMealPlan(
   profileIds: string[],
   date: string,
   mealTypes: string[],
-  days: number = 7
+  days: number = 7,
+  dietaryGoals?: string
 ) {
   const profiles = await prisma.profile.findMany({
     where: { id: { in: profileIds }, userId },
@@ -83,7 +84,8 @@ export async function generateMealPlan(
       profileContexts,
       batchDates,
       mealTypes,
-      [...usedMealNames, ...allAiMeals.map((m) => m.mealName)]
+      [...usedMealNames, ...allAiMeals.map((m) => m.mealName)],
+      dietaryGoals
     );
 
     // Ensure every meal has a valid date from this batch

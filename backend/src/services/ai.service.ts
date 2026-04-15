@@ -49,13 +49,19 @@ ${buildProfileConstraints(profile)}
 
 Categories requested: ${categories.join(', ')}
 
+IMPORTANT RULES:
+- If category "brand" is requested, recommend specific commercial branded products with full product names (e.g., "Cheerios Honey Nut Cereal - 18oz Box", "Chobani Greek Yogurt - Strawberry"). Set itemType to "brand" and ingredients to an EMPTY array [].
+- For "food" type: recommend whole/fresh ingredients or simple prepared items.
+- For "recipe" type: recommend meals with ingredient lists.
+- For brand items, set ingredients to an EMPTY array [] since they are purchased as a whole product.
+
 Return JSON with this structure:
 {
   "recommendations": [
     {
       "itemName": "string",
       "itemType": "food" | "brand" | "recipe",
-      "category": "breakfast" | "lunch" | "dinner" | "snack" | "beverage" | "dessert",
+      "category": "breakfast" | "lunch" | "dinner" | "snack" | "beverage" | "dessert" | "brand",
       "reason": "string (2-3 sentences explaining why this is good for this profile)",
       "ingredients": ["string"],
       "alternatives": ["string", "string"],
@@ -133,7 +139,8 @@ export async function generateMeals(
   profiles: ProfileContext[],
   dates: string | string[],
   mealTypes: string[],
-  recentMeals: string[]
+  recentMeals: string[],
+  dietaryGoals?: string
 ): Promise<any[]> {
   const profilesText = profiles.map(buildProfileConstraints).join('\n\n');
   const dateList = Array.isArray(dates) ? dates : [dates];
@@ -157,6 +164,7 @@ Meal types needed per day per profile: ${mealTypes.join(', ')}
 
 ${dateList.length > 1 ? `CRITICAL: You MUST generate meals for EVERY date listed. Each profile needs ALL meal types for EACH day. Every meal object MUST include a "date" field set to the YYYY-MM-DD it belongs to. Do NOT put all meals on one date.\n` : ''}
 Recent meals to AVOID repeating: ${recentMeals.length ? recentMeals.join(', ') : 'None'}
+${dietaryGoals ? `\nDIETARY GOALS: The user wants meals that are: ${dietaryGoals}. Prioritize meals that align with these goals.\n` : ''}
 
 Return JSON:
 {
@@ -225,7 +233,8 @@ Return JSON:
 export async function findNearbyStores(
   items: { name: string; quantity: string }[],
   zipCode: string,
-  crowdSourcedPrices: Record<string, Record<string, number>>
+  crowdSourcedPrices: Record<string, Record<string, number>>,
+  knownStores?: { name: string; address: string; phone?: string; rating?: number; hours?: string[] }[]
 ): Promise<any[]> {
   const itemList = items.map((i) => `${i.quantity} × ${i.name}`).join('\n');
   const priceContext = Object.entries(crowdSourcedPrices)
@@ -237,6 +246,19 @@ export async function findNearbyStores(
     })
     .join('\n\n');
 
+  const storeDirective = knownStores?.length
+    ? `KNOWN STORES (from Google Places — use ONLY these stores, do NOT invent others):
+${knownStores.map((s) => `- ${s.name} — ${s.address}${s.phone ? ` — ${s.phone}` : ''}${s.rating ? ` — Rating: ${s.rating}` : ''}${s.hours?.length ? ` — Hours: ${s.hours[0]}` : ''}`).join('\n')}
+
+Estimate prices for each of the above stores. Use crowd-sourced data where available and estimate the rest based on each store's typical pricing tier.`
+    : `Find ALL grocery stores within an 8-10 mile radius of ZIP code ${zipCode} and estimate the total cost of this shopping list at each store. 
+
+IMPORTANT: 
+- Include ALL major grocery stores within 8-10 miles (at least 6-10 stores).
+- Include budget stores (Walmart, Aldi, Lidl, Dollar General), mid-range (Kroger, Publix, HEB, Safeway, Meijer, Food Lion), and premium (Whole Foods, Trader Joe's, Sprouts, Fresh Market).
+- Also include warehouse clubs (Costco, Sam's Club, BJ's) if nearby.
+- DO NOT limit to just the same ZIP code — include surrounding areas within the 8-10 mile radius.`;
+
   const response = await openai.chat.completions.create({
     model: 'gpt-4o',
     response_format: { type: 'json_object' },
@@ -244,13 +266,8 @@ export async function findNearbyStores(
       { role: 'system', content: SYSTEM_PROMPT },
       {
         role: 'user',
-        content: `Find ALL grocery stores within an 8-10 mile radius of ZIP code ${zipCode} and estimate the total cost of this shopping list at each store. 
+        content: `${storeDirective}
 
-IMPORTANT: 
-- Include ALL major grocery stores within 8-10 miles (at least 6-10 stores).
-- Include budget stores (Walmart, Aldi, Lidl, Dollar General), mid-range (Kroger, Publix, HEB, Safeway, Meijer, Food Lion), and premium (Whole Foods, Trader Joe's, Sprouts, Fresh Market).
-- Also include warehouse clubs (Costco, Sam's Club, BJ's) if nearby.
-- DO NOT limit to just the same ZIP code — include surrounding areas within the 8-10 mile radius.
 - Calculate totals by multiplying each item's unit price by its quantity. For example, "16 cream cheese" at ~$2/each = $32, NOT $2.
 - Prices entered by users are TOTAL price (not per-unit), so keep item-level prices as the total paid.
 - Sort by estimated total (cheapest first).
@@ -380,4 +397,74 @@ Return JSON:
   if (!content) throw new Error('No response from AI');
   const parsed = JSON.parse(content);
   return parsed.alternatives || [];
+}
+
+export interface ReceiptLineItem {
+  itemName: string;
+  price: number;
+  quantity: number;
+}
+
+export interface ReceiptOcrResult {
+  storeName: string | null;
+  storeAddress: string | null;
+  date: string | null;
+  items: ReceiptLineItem[];
+  subtotal: number | null;
+  tax: number | null;
+  total: number | null;
+}
+
+export async function extractReceiptData(
+  imageBase64: string,
+  mimeType: string
+): Promise<ReceiptOcrResult> {
+  const response = await openai.chat.completions.create({
+    model: 'gpt-4o',
+    response_format: { type: 'json_object' },
+    messages: [
+      {
+        role: 'system',
+        content: 'You extract structured data from grocery store receipt images. Return accurate data only — do not hallucinate items or prices that are not visible.',
+      },
+      {
+        role: 'user',
+        content: [
+          {
+            type: 'text',
+            text: `Extract all line items, store info, and totals from this receipt image.
+
+Return JSON:
+{
+  "storeName": "string or null",
+  "storeAddress": "string or null",
+  "date": "YYYY-MM-DD or null",
+  "items": [
+    { "itemName": "string", "price": number, "quantity": number }
+  ],
+  "subtotal": number or null,
+  "tax": number or null,
+  "total": number or null
+}
+
+Rules:
+- Only include items clearly visible on the receipt
+- Price should be the total for that line (price × quantity if shown)
+- quantity defaults to 1 if not explicit
+- Normalize item names to plain English (e.g., "ORG BANANNAS" → "Organic Bananas")`,
+          },
+          {
+            type: 'image_url',
+            image_url: { url: `data:${mimeType};base64,${imageBase64}` },
+          },
+        ],
+      },
+    ],
+    temperature: 0.1,
+    max_tokens: 4000,
+  });
+
+  const content = response.choices[0]?.message?.content;
+  if (!content) throw new Error('Could not read receipt');
+  return JSON.parse(content);
 }

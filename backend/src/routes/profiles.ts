@@ -2,6 +2,7 @@ import { Router, Response, NextFunction } from 'express';
 import { z } from 'zod';
 import { authenticate, AuthRequest } from '../middleware/auth.js';
 import * as profileService from '../services/profile.service.js';
+import { firstParam } from '../utils/http.js';
 
 const router = Router();
 router.use(authenticate);
@@ -38,7 +39,8 @@ router.post('/', async (req: AuthRequest, res: Response, next: NextFunction) => 
 
 router.get('/:id', async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
-    const profile = await profileService.getProfile(req.user!.userId, req.params.id);
+    const profileId = firstParam(req.params.id);
+    const profile = await profileService.getProfile(req.user!.userId, profileId!);
     res.json(profile);
   } catch (err) { next(err); }
 });
@@ -46,14 +48,16 @@ router.get('/:id', async (req: AuthRequest, res: Response, next: NextFunction) =
 router.put('/:id', async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     const data = profileSchema.partial().parse(req.body);
-    const profile = await profileService.updateProfile(req.user!.userId, req.params.id, data);
+    const profileId = firstParam(req.params.id);
+    const profile = await profileService.updateProfile(req.user!.userId, profileId!, data);
     res.json(profile);
   } catch (err) { next(err); }
 });
 
 router.delete('/:id', async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
-    await profileService.deleteProfile(req.user!.userId, req.params.id);
+    const profileId = firstParam(req.params.id);
+    await profileService.deleteProfile(req.user!.userId, profileId!);
     res.json({ success: true });
   } catch (err) { next(err); }
 });

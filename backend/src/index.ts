@@ -1,5 +1,6 @@
 import app from './app.js';
 import { env } from './config/env.js';
+import { startMealReminderJob } from './jobs/mealReminder.js';
 import { startPriceAggregationJob } from './jobs/priceAggregation.js';
 
 const server = app.listen(env.PORT, () => {
@@ -8,6 +9,7 @@ const server = app.listen(env.PORT, () => {
 });
 
 startPriceAggregationJob();
+startMealReminderJob();
 
 process.on('SIGTERM', () => {
   console.log('SIGTERM received. Shutting down...');

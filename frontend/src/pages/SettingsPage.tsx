@@ -20,6 +20,8 @@ export default function SettingsPage() {
   const queryClient = useQueryClient();
   const [showDeleteAccount, setShowDeleteAccount] = useState(false);
   const [showChangePassword, setShowChangePassword] = useState(false);
+  const [showEmailDisclosure, setShowEmailDisclosure] = useState(false);
+  const [acceptEmailDisclosure, setAcceptEmailDisclosure] = useState(false);
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
@@ -35,6 +37,13 @@ export default function SettingsPage() {
       queryClient.invalidateQueries({ queryKey: ['preferences'] });
       toast('success', 'Preferences updated');
     },
+    onError: (err: Error) => toast('error', 'Failed to update preferences', err.message),
+  });
+
+  const sendTestEmailMutation = useMutation({
+    mutationFn: () => api.sendTestNotificationEmail(),
+    onSuccess: () => toast('success', 'Test email sent', `Sent to ${user?.email}`),
+    onError: (err: Error) => toast('error', 'Failed to send test email', err.message),
   });
 
   const changePasswordMutation = useMutation({
@@ -67,6 +76,36 @@ export default function SettingsPage() {
     mutationFn: () => api.deleteAccount(),
     onSuccess: () => logout(),
   });
+
+  const emailNotificationsEnabled = preferences?.emailNotificationsEnabled ?? false;
+  const emailDisclosureAccepted = preferences?.emailNotificationsDisclosureAccepted ?? false;
+  const emailConsentDate = preferences?.emailNotificationsDisclosureAcceptedAt
+    ? new Date(preferences.emailNotificationsDisclosureAcceptedAt).toLocaleDateString()
+    : null;
+
+  const handleEmailNotificationsToggle = (nextValue: boolean) => {
+    if (!nextValue) {
+      updatePreferencesMutation.mutate({ emailNotificationsEnabled: false });
+      return;
+    }
+
+    if (emailDisclosureAccepted) {
+      updatePreferencesMutation.mutate({ emailNotificationsEnabled: true });
+      return;
+    }
+
+    setAcceptEmailDisclosure(false);
+    setShowEmailDisclosure(true);
+  };
+
+  const enableEmailNotifications = () => {
+    updatePreferencesMutation.mutate({
+      emailNotificationsEnabled: true,
+      emailNotificationsDisclosureAccepted: true,
+      emailNotificationsDisclosureAcceptedAt: new Date().toISOString(),
+    });
+    setShowEmailDisclosure(false);
+  };
 
   return (
     <div className="max-w-2xl mx-auto space-y-6">
@@ -127,23 +166,56 @@ export default function SettingsPage() {
 
       {/* Notifications */}
       <SettingsSection icon={Bell} title="Notifications">
+        <div className="py-3 space-y-3">
+          <ToggleRow
+            label="Email notifications"
+            description={emailNotificationsEnabled
+              ? `Notification emails are enabled for ${user?.email}`
+              : 'Enable email delivery for reminders and account activity updates'}
+            value={emailNotificationsEnabled}
+            onChange={handleEmailNotificationsToggle}
+          />
+
+          <div className="rounded-2xl border border-card-border bg-slate-50 px-4 py-3 text-xs text-muted space-y-2">
+            <p>
+              Email notifications are optional and sent to <span className="font-medium text-foreground">{user?.email}</span>.
+              {emailConsentDate ? ` Disclosure accepted on ${emailConsentDate}.` : ' You must review and accept the disclosure before enabling them.'}
+            </p>
+            <div className="flex flex-wrap gap-2">
+              <Button variant="outline" size="sm" onClick={() => setShowEmailDisclosure(true)}>
+                Review disclosure
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => sendTestEmailMutation.mutate()}
+                disabled={!emailNotificationsEnabled || sendTestEmailMutation.isPending}
+              >
+                {sendTestEmailMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Send test email'}
+              </Button>
+            </div>
+          </div>
+        </div>
         <ToggleRow
           label="Meal plan reminders"
           description="Daily reminder to check your planned meals"
           value={preferences?.mealReminders ?? true}
           onChange={(v) => updatePreferencesMutation.mutate({ mealReminders: v })}
+          disabled={!emailNotificationsEnabled}
         />
         <ToggleRow
           label="Shopping list alerts"
-          description="Notify when items are added to your list"
+          description="Email when items are added to your shopping list"
           value={preferences?.shoppingAlerts ?? true}
           onChange={(v) => updatePreferencesMutation.mutate({ shoppingAlerts: v })}
+          disabled={!emailNotificationsEnabled}
         />
         <ToggleRow
           label="Price drop notifications"
-          description="Alert when tracked items drop in price"
+          description="Email when tracked items in your area drop meaningfully in price"
           value={preferences?.priceDropAlerts ?? false}
           onChange={(v) => updatePreferencesMutation.mutate({ priceDropAlerts: v })}
+          disabled={!emailNotificationsEnabled}
         />
       </SettingsSection>
 
@@ -216,6 +288,42 @@ export default function SettingsPage() {
         </DialogContent>
       </Dialog>
 
+      <Dialog open={showEmailDisclosure} onOpenChange={setShowEmailDisclosure}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Enable Email Notifications</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 my-4 text-sm text-muted">
+            <p>
+              Replate Nutrition can send optional email notifications to <span className="font-medium text-foreground">{user?.email}</span>
+              for meal reminders, shopping alerts, and price updates tied to your account activity.
+            </p>
+            <div className="rounded-2xl border border-card-border bg-slate-50 p-4 space-y-2 text-[13px] leading-6">
+              <p>Message frequency varies based on the notification types you enable and the activity in your account.</p>
+              <p>These emails may reference household planning details and are not medical, nutrition, or veterinary advice.</p>
+              <p>You can turn email notifications off at any time in Settings.</p>
+            </div>
+            <label className="flex items-start gap-3 rounded-2xl border border-card-border p-4 cursor-pointer">
+              <input
+                type="checkbox"
+                className="mt-0.5 h-4 w-4 rounded border-slate-300"
+                checked={acceptEmailDisclosure}
+                onChange={(e) => setAcceptEmailDisclosure(e.target.checked)}
+              />
+              <span className="text-sm text-foreground">
+                I understand the disclosure above and consent to receive optional Replate Nutrition notification emails at this address.
+              </span>
+            </label>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowEmailDisclosure(false)}>Cancel</Button>
+            <Button onClick={enableEmailNotifications} disabled={!acceptEmailDisclosure || updatePreferencesMutation.isPending}>
+              {updatePreferencesMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Accept and enable'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       {/* Delete Account Dialog */}
       <Dialog open={showDeleteAccount} onOpenChange={setShowDeleteAccount}>
         <DialogContent>
@@ -268,19 +376,20 @@ function SettingsRow({ label, value, children }: { label: string; value: string;
   );
 }
 
-function ToggleRow({ label, description, value, onChange }: {
-  label: string; description: string; value: boolean; onChange: (v: boolean) => void;
+function ToggleRow({ label, description, value, onChange, disabled = false }: {
+  label: string; description: string; value: boolean; onChange: (v: boolean) => void; disabled?: boolean;
 }) {
   return (
-    <div className="flex items-center justify-between py-3">
+    <div className={cn('flex items-center justify-between py-3', disabled && 'opacity-50')}>
       <div>
         <p className="text-sm font-medium">{label}</p>
         <p className="text-[10px] text-muted">{description}</p>
       </div>
       <button
-        onClick={() => onChange(!value)}
+        onClick={() => !disabled && onChange(!value)}
+        disabled={disabled}
         className={cn(
-          'relative w-11 h-6 rounded-full transition-colors duration-200',
+          'relative w-11 h-6 rounded-full transition-colors duration-200 disabled:cursor-not-allowed',
           value ? 'bg-primary' : 'bg-slate-200'
         )}
       >

@@ -17,6 +17,7 @@ export const env = {
 
   RESEND_API_KEY: process.env.RESEND_API_KEY,
   FROM_EMAIL: process.env.FROM_EMAIL || 'noreply@replatenutrition.com',
+  MEAL_REMINDER_CRON: process.env.MEAL_REMINDER_CRON || '0 7 * * *',
 
   FRONTEND_URL: process.env.FRONTEND_URL || 'http://localhost:5173',
 

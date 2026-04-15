@@ -10,7 +10,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import { EmptyState } from '@/components/shared/EmptyState';
-import { getGreeting, formatCurrency } from '@/lib/utils';
+import { getGreeting, formatCurrency, cn } from '@/lib/utils';
 
 const stagger = {
   hidden: { opacity: 0 },
@@ -48,10 +48,24 @@ export default function DashboardPage() {
     queryFn: () => api.getRecommendations(),
   });
 
+  const { data: shoppingHistory } = useQuery({
+    queryKey: ['shoppingHistory'],
+    queryFn: () => api.getShoppingHistory(),
+  });
+
   const budget = preferences?.budget || 0; // Budget is stored as monthly
+  const monthlySpent = (() => {
+    if (!shoppingHistory) return 0;
+    const now = new Date();
+    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+    return shoppingHistory
+      .filter((h: any) => new Date(h.shoppingDate) >= startOfMonth)
+      .reduce((sum: number, h: any) => sum + (h.actualCost || 0), 0);
+  })();
+  const budgetRemaining = budget > 0 ? Math.max(0, budget - monthlySpent) : budget;
   const budgetData = [
-    { name: 'Spent', value: 0 },
-    { name: 'Remaining', value: budget },
+    { name: 'Spent', value: monthlySpent },
+    { name: 'Remaining', value: budgetRemaining },
   ];
 
   return (
@@ -71,6 +85,41 @@ export default function DashboardPage() {
         <StatCard label="Today's Meals" value={todayMeals?.length ?? 0} icon={CalendarDays} loading={mealsLoading} />
         <StatCard label="Recommendations" value={recommendations?.length ?? 0} icon={Sparkles} />
       </motion.div>
+
+      {/* Budget widget — visible on mobile above the grid */}
+      {budget > 0 && (
+        <motion.div variants={fadeUp} className="lg:hidden">
+          <Card>
+            <CardContent className="p-4">
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-sm font-semibold flex items-center gap-2">
+                  <TrendingDown className="h-4 w-4 text-accent-success" /> Monthly Budget
+                </span>
+                <span className={cn(
+                  'text-sm font-bold',
+                  budgetRemaining > 0 ? 'text-emerald-600' : 'text-red-600'
+                )}>
+                  {formatCurrency(budgetRemaining)} left
+                </span>
+              </div>
+              <div className="h-2 rounded-full bg-slate-100 overflow-hidden">
+                <div
+                  className={cn(
+                    'h-full rounded-full transition-all',
+                    monthlySpent / budget > 0.9 ? 'bg-red-500' :
+                    monthlySpent / budget > 0.7 ? 'bg-amber-500' : 'bg-emerald-500'
+                  )}
+                  style={{ width: `${Math.min(100, (monthlySpent / budget) * 100)}%` }}
+                />
+              </div>
+              <div className="flex justify-between mt-1.5 text-[10px] text-muted">
+                <span>Spent: {formatCurrency(monthlySpent)}</span>
+                <span>Budget: {formatCurrency(budget)}</span>
+              </div>
+            </CardContent>
+          </Card>
+        </motion.div>
+      )}
 
       {/* Main grid */}
       <div className="grid lg:grid-cols-3 gap-6">
@@ -195,9 +244,9 @@ export default function DashboardPage() {
 
         {/* Right column (1/3) */}
         <div className="space-y-6">
-          {/* Budget ring */}
+          {/* Budget ring — desktop only (mobile version shown above) */}
           {budget > 0 && (
-            <motion.div variants={fadeUp}>
+            <motion.div variants={fadeUp} className="hidden lg:block">
               <Card>
                 <CardHeader>
                   <CardTitle className="text-sm flex items-center gap-2">
@@ -227,10 +276,14 @@ export default function DashboardPage() {
                         </PieChart>
                       </ResponsiveContainer>
                       <div className="absolute inset-0 flex flex-col items-center justify-center">
-                        <span className="font-mono text-lg font-bold">{formatCurrency(budget)}</span>
+                        <span className="font-mono text-lg font-bold">{formatCurrency(budgetRemaining)}</span>
                         <span className="text-[10px] text-muted">remaining</span>
                       </div>
                     </div>
+                  </div>
+                  <div className="flex justify-between mt-3 text-[10px] text-muted">
+                    <span>Spent: {formatCurrency(monthlySpent)}</span>
+                    <span>Budget: {formatCurrency(budget)}</span>
                   </div>
                 </CardContent>
               </Card>

@@ -73,7 +73,13 @@ export default function MealPlanPage() {
   const [baseDate, setBaseDate] = useState(() => new Date());
   const [showGenerate, setShowGenerate] = useState(false);
   const [generateDays, setGenerateDays] = useState(7);
+  const [generateStartDate, setGenerateStartDate] = useState(() => {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  });
   const [selectedProfiles, setSelectedProfiles] = useState<string[]>([]);
+  const [selectedMealTypes, setSelectedMealTypes] = useState<string[]>(['breakfast', 'lunch', 'dinner', 'snack']);
+  const [dietaryGoals, setDietaryGoals] = useState('');
   const [filterProfileId, setFilterProfileId] = useState<string>('all');
 
   const dates = useMemo(() => getWeekDates(baseDate, view), [baseDate, view]);
@@ -94,9 +100,8 @@ export default function MealPlanPage() {
 
   const generateMutation = useMutation({
     mutationFn: () => {
-      const startDate = toLocalDateStr(new Date());
-      const mealTypes = ['breakfast', 'lunch', 'dinner', 'snack'];
-      return api.generateMealPlan(selectedProfiles, startDate, mealTypes, generateDays);
+      const mealTypes = selectedMealTypes.length > 0 ? selectedMealTypes : ['breakfast', 'lunch', 'dinner', 'snack'];
+      return api.generateMealPlan(selectedProfiles, generateStartDate, mealTypes, generateDays, dietaryGoals || undefined);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['mealPlans'] });
@@ -293,6 +298,16 @@ export default function MealPlanPage() {
             </div>
 
             <div>
+              <p className="text-sm font-medium mb-2">Start date</p>
+              <input
+                type="date"
+                value={generateStartDate}
+                onChange={(e) => setGenerateStartDate(e.target.value)}
+                className="flex h-10 w-full rounded-xl border border-card-border bg-white px-3 py-2 text-sm transition-colors focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary"
+              />
+            </div>
+
+            <div>
               <p className="text-sm font-medium mb-2">Number of days</p>
               <div className="flex gap-2">
                 {[3, 5, 7, 14].map((d) => (
@@ -310,6 +325,48 @@ export default function MealPlanPage() {
                   </button>
                 ))}
               </div>
+            </div>
+
+            <div>
+              <p className="text-sm font-medium mb-2">Meal types</p>
+              <div className="flex flex-wrap gap-2">
+                {(() => {
+                  const selectedProfileObjs = profiles?.filter((p) => selectedProfiles.includes(p.id)) || [];
+                  const hasPets = selectedProfileObjs.some((p) => p.type === 'PET');
+                  const hasHumans = selectedProfileObjs.some((p) => p.type === 'HUMAN');
+                  const types = [
+                    ...(hasHumans || selectedProfiles.length === 0 ? ['breakfast', 'lunch', 'dinner', 'snack', 'beverage', 'dessert'] : []),
+                    ...(hasPets ? ['morning_feed', 'evening_feed', 'treat_time'] : []),
+                  ];
+                  return types.map((t) => (
+                    <button
+                      key={t}
+                      onClick={() => setSelectedMealTypes((s) =>
+                        s.includes(t) ? s.filter((x) => x !== t) : [...s, t]
+                      )}
+                      className={cn(
+                        'px-3 py-1.5 rounded-xl text-xs font-medium border-2 transition-all capitalize',
+                        selectedMealTypes.includes(t)
+                          ? 'border-primary bg-primary/10 text-primary'
+                          : 'border-card-border text-muted hover:border-slate-300'
+                      )}
+                    >
+                      {t.replace('_', ' ')}
+                    </button>
+                  ));
+                })()}
+              </div>
+            </div>
+
+            <div>
+              <p className="text-sm font-medium mb-2">Dietary goals <span className="text-muted font-normal">(optional)</span></p>
+              <input
+                type="text"
+                value={dietaryGoals}
+                onChange={(e) => setDietaryGoals(e.target.value)}
+                placeholder="e.g., high protein, low carb, keto, Mediterranean..."
+                className="flex h-10 w-full rounded-xl border border-card-border bg-white px-3 py-2 text-sm transition-colors placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary"
+              />
             </div>
           </div>
           <DialogFooter>

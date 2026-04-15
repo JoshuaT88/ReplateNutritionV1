@@ -16,8 +16,8 @@ import { useToast } from '@/components/ui/toast';
 import { cn } from '@/lib/utils';
 import type { Recommendation } from '@/types';
 
-const CATEGORIES = ['breakfast', 'lunch', 'dinner', 'snack', 'beverage', 'dessert'];
-const PET_CATEGORIES = ['kibble', 'wet_food', 'treats', 'fresh_food', 'supplement'];
+const CATEGORIES = ['breakfast', 'lunch', 'dinner', 'snack', 'beverage', 'dessert', 'brand'];
+const PET_CATEGORIES = ['kibble', 'wet_food', 'treats', 'fresh_food', 'supplement', 'brand'];
 const PET_MEAL_TYPES = ['morning_feed', 'evening_feed', 'treat_time'];
 
 export default function RecommendationsPage() {

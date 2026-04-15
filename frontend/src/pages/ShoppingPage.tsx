@@ -9,7 +9,7 @@ import {
 import { api } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { Card } from '@/components/ui/card';
+import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
 import { EmptyState } from '@/components/shared/EmptyState';
@@ -63,6 +63,11 @@ export default function ShoppingPage() {
   const { data: mealPlans } = useQuery({
     queryKey: ['mealPlans'],
     queryFn: () => api.getMealPlans(),
+  });
+
+  const { data: shoppingHistory } = useQuery({
+    queryKey: ['shoppingHistory'],
+    queryFn: () => api.getShoppingHistory(),
   });
 
   const { data: stores, isFetching: storesFetching } = useQuery({
@@ -130,9 +135,8 @@ export default function ShoppingPage() {
 
   const tryStartSession = (storeName?: string, storeEstimate?: number) => {
     const monthlyBudget = preferences?.budget || 0;
-    // Use store estimate if provided, else use list-level estimate, else rough guess ($5/item)
-    const estimate = storeEstimate || totalEstimate || (items.length * 5);
-    if (monthlyBudget > 0 && estimate > monthlyBudget) {
+    const estimate = storeEstimate || totalEstimate || 0;
+    if (monthlyBudget > 0 && estimate > 0 && estimate > monthlyBudget) {
       setPendingStoreName(storeName);
       setShowBudgetWarning(true);
     } else {
@@ -154,6 +158,18 @@ export default function ShoppingPage() {
   }, {});
 
   const totalEstimate = items.reduce((sum, i) => sum + (i.estimatedPrice || 0), 0);
+
+  // Monthly spending from history
+  const monthlyBudget = preferences?.budget || 0;
+  const monthlySpent = (() => {
+    if (!shoppingHistory) return 0;
+    const now = new Date();
+    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+    return shoppingHistory
+      .filter((h: any) => new Date(h.shoppingDate) >= startOfMonth)
+      .reduce((sum: number, h: any) => sum + (h.actualCost || 0), 0);
+  })();
+  const budgetRemaining = monthlyBudget > 0 ? monthlyBudget - monthlySpent : 0;
 
   return (
     <div className="space-y-6">
@@ -184,6 +200,40 @@ export default function ShoppingPage() {
           </Button>
         </div>
       </div>
+
+      {/* Budget Widget */}
+      {monthlyBudget > 0 && (
+        <Card>
+          <CardContent className="p-4">
+            <div className="flex items-center justify-between mb-2">
+              <div className="flex items-center gap-2">
+                <DollarSign className="h-4 w-4 text-primary" />
+                <span className="text-sm font-semibold">Monthly Budget</span>
+              </div>
+              <span className={cn(
+                'text-sm font-bold',
+                budgetRemaining > 0 ? 'text-emerald-600' : 'text-red-600'
+              )}>
+                {formatCurrency(budgetRemaining)} remaining
+              </span>
+            </div>
+            <div className="h-2 rounded-full bg-slate-100 overflow-hidden">
+              <div
+                className={cn(
+                  'h-full rounded-full transition-all',
+                  monthlySpent / monthlyBudget > 0.9 ? 'bg-red-500' :
+                  monthlySpent / monthlyBudget > 0.7 ? 'bg-amber-500' : 'bg-emerald-500'
+                )}
+                style={{ width: `${Math.min(100, (monthlySpent / monthlyBudget) * 100)}%` }}
+              />
+            </div>
+            <div className="flex justify-between mt-1.5 text-[10px] text-muted">
+              <span>Spent: {formatCurrency(monthlySpent)}</span>
+              <span>Budget: {formatCurrency(monthlyBudget)}</span>
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       {/* Search */}
       <div className="relative max-w-sm">
@@ -490,7 +540,7 @@ export default function ShoppingPage() {
           </DialogHeader>
           <div className="space-y-3 my-4">
             <p className="text-sm text-muted">
-              Your shopping list estimate ({formatCurrency(totalEstimate || items.length * 5)}) exceeds your monthly budget
+              Your shopping list estimate ({formatCurrency(totalEstimate)}) exceeds your monthly budget
               of {formatCurrency(preferences?.budget || 0)}.
             </p>
             <div className="rounded-xl bg-amber-50 border border-amber-200 p-3">

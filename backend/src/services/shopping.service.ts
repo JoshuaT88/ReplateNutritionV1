@@ -2,6 +2,8 @@ import prisma from '../config/database.js';
 import { Prisma } from '@prisma/client';
 import { AppError } from '../middleware/errorHandler.js';
 import * as aiService from './ai.service.js';
+import { searchNearbyStores } from './store.service.js';
+import { emailNotificationsConfigured, sendShoppingAlertEmail } from './notification.service.js';
 
 // Hardcoded grocery category lookup to avoid AI calls per ingredient
 const GROCERY_CATEGORY_MAP: Record<string, string[]> = {
@@ -80,6 +82,45 @@ function categorizeGroceryItem(itemName: string): string {
   return 'Other';
 }
 
+async function sendShoppingAlertIfEnabled(
+  userId: string,
+  items: Array<{ itemName: string; quantity?: string | null; category?: string | null }>,
+  sourceLabel: string
+) {
+  if (!items.length || !emailNotificationsConfigured()) {
+    return;
+  }
+
+  const prefs = await prisma.userPreferences.findUnique({
+    where: { userId },
+    include: {
+      user: {
+        select: {
+          email: true,
+          fullName: true,
+        },
+      },
+    },
+  });
+
+  if (!prefs?.emailNotificationsEnabled || !prefs.emailNotificationsDisclosureAccepted || !prefs.shoppingAlerts) {
+    return;
+  }
+
+  try {
+    await sendShoppingAlertEmail(
+      {
+        email: prefs.user.email,
+        fullName: prefs.user.fullName,
+      },
+      items,
+      sourceLabel
+    );
+  } catch (err) {
+    console.warn('Shopping alert email skipped:', err);
+  }
+}
+
 export async function getShoppingList(userId: string) {
   return prisma.shoppingList.findMany({
     where: { userId },
@@ -103,7 +144,7 @@ export async function addShoppingItem(userId: string, data: any) {
     }
   }
 
-  return prisma.shoppingList.create({
+  const saved = await prisma.shoppingList.create({
     data: {
       userId,
       itemName: data.itemName,
@@ -114,6 +155,10 @@ export async function addShoppingItem(userId: string, data: any) {
       notes: data.notes,
     },
   });
+
+  await sendShoppingAlertIfEnabled(userId, [saved], 'an item was added to your shopping list');
+
+  return saved;
 }
 
 export async function updateShoppingItem(userId: string, id: string, data: any) {
@@ -171,6 +216,12 @@ export async function generateFromMealPlans(userId: string, profileIds: string[]
     created.push(saved);
   }
 
+  await sendShoppingAlertIfEnabled(
+    userId,
+    created,
+    `items were added from your meal plan for the next ${days} day${days > 1 ? 's' : ''}`
+  );
+
   return created;
 }
 
@@ -197,10 +248,22 @@ export async function findStores(userId: string, zipCode: string) {
     crowdSourcedPrices[avg.storeName][avg.itemName] = avg.avgPrice;
   }
 
+  // Get real stores from Google Places API
+  let realStores: { name: string; address: string; phone?: string; rating?: number; hours?: string[]; placeId: string }[] = [];
+  try {
+    realStores = await searchNearbyStores(zipCode);
+  } catch (err) {
+    console.warn('Google Places lookup failed, falling back to AI-only:', err);
+  }
+
+  // If we have real store data, use AI only for price estimation with the known stores
   const stores = await aiService.findNearbyStores(
     items.map((i) => ({ name: i.itemName, quantity: i.quantity || '1' })),
     zipCode,
-    crowdSourcedPrices
+    crowdSourcedPrices,
+    realStores.length > 0
+      ? realStores.map((s) => ({ name: s.name, address: s.address, phone: s.phone, rating: s.rating, hours: s.hours }))
+      : undefined
   );
 
   return stores;
@@ -384,6 +447,11 @@ export async function submitSessionPrice(
   itemId: string,
   price: number
 ) {
+  // Basic sanity check
+  if (price < 0 || price > 9999) {
+    throw new AppError(400, 'Price must be between $0 and $9,999');
+  }
+
   const session = await prisma.shoppingSession.findFirst({
     where: { id: sessionId, userId },
   });
@@ -394,7 +462,7 @@ export async function submitSessionPrice(
 
   const storeName = (session.selectedStore as any)?.name || 'Unknown';
 
-  // Update session price
+  // Update session price (always saved so the user's review screen shows it)
   const prices = (session.itemPrices as Record<string, number>) || {};
   prices[itemId] = price;
   await prisma.shoppingSession.update({
@@ -402,21 +470,37 @@ export async function submitSessionPrice(
     data: { itemPrices: prices },
   });
 
-  // Submit to crowd-sourced price DB
+  // Outlier detection: compare against existing crowd-sourced average
   const prefs = await prisma.userPreferences.findUnique({ where: { userId } });
   const zipRegion = prefs?.zipCode?.slice(0, 3) || '000';
 
-  await prisma.priceSubmission.create({
-    data: {
-      userId,
-      itemName: item.itemName,
-      storeName,
-      zipRegion,
-      actualPrice: price,
-    },
+  let flaggedOutlier = false;
+  const existing = await prisma.storeItemAverage.findUnique({
+    where: { itemName_storeName_zipRegion: { itemName: item.itemName, storeName, zipRegion } },
   });
 
-  return { success: true };
+  if (existing && existing.submissionCount >= 3) {
+    // Flag as outlier if price is more than 5x or less than 1/5 of the average
+    const ratio = price / existing.avgPrice;
+    if (ratio > 5 || ratio < 0.2) {
+      flaggedOutlier = true;
+    }
+  }
+
+  // Submit to crowd-sourced price DB (skip outliers to protect data quality)
+  if (!flaggedOutlier) {
+    await prisma.priceSubmission.create({
+      data: {
+        userId,
+        itemName: item.itemName,
+        storeName,
+        zipRegion,
+        actualPrice: price,
+      },
+    });
+  }
+
+  return { success: true, flaggedOutlier };
 }
 
 export async function endShoppingSession(userId: string, sessionId: string) {
@@ -544,6 +628,8 @@ export async function addIngredientsToList(
     });
     created.push(saved);
   }
+
+  await sendShoppingAlertIfEnabled(userId, created, `ingredients from ${data.mealName} were added to your shopping list`);
 
   return created;
 }

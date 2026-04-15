@@ -74,6 +74,12 @@ model UserPreferences {
   firstVisitCompleted   Boolean @default(false) @map("first_visit_completed")
   profilePictureUrl     String? @map("profile_picture_url")
   householdType         String? @map("household_type")
+  mealReminders         Boolean @default(true) @map("meal_reminders")
+  shoppingAlerts        Boolean @default(true) @map("shopping_alerts")
+  priceDropAlerts       Boolean @default(false) @map("price_drop_alerts")
+  emailNotificationsEnabled Boolean @default(false) @map("email_notifications_enabled")
+  emailNotificationsDisclosureAccepted Boolean @default(false) @map("email_notifications_disclosure_accepted")
+  emailNotificationsDisclosureAcceptedAt DateTime? @map("email_notifications_disclosure_accepted_at")
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
@@ -226,6 +232,7 @@ model StoreItemAverage {
   storeName       String   @map("store_name")
   zipRegion       String   @map("zip_region")
   avgPrice        Float    @map("avg_price")
+  previousAvgPrice Float?  @map("previous_avg_price")
   submissionCount Int      @map("submission_count")
   lastUpdated     DateTime @default(now()) @map("last_updated")
 

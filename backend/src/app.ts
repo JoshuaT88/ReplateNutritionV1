@@ -23,7 +23,9 @@ const app = express();
 const uploadsDir = path.resolve('uploads/receipts');
 fs.mkdirSync(uploadsDir, { recursive: true });
 
-app.use(helmet());
+app.use(helmet({
+  crossOriginResourcePolicy: { policy: 'cross-origin' },
+}));
 app.use(cors({
   origin: env.FRONTEND_URL,
   credentials: true,

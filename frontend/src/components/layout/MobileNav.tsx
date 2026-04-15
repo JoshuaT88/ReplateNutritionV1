@@ -1,19 +1,21 @@
 import { NavLink } from 'react-router-dom';
-import { LayoutDashboard, Users, ShoppingCart, CalendarDays, Settings } from 'lucide-react';
+import { LayoutDashboard, Users, ShoppingCart, CalendarDays, History, Settings, HelpCircle } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 const tabs = [
   { to: '/', icon: LayoutDashboard, label: 'Home' },
   { to: '/profiles', icon: Users, label: 'Profiles' },
-  { to: '/shopping', icon: ShoppingCart, label: 'Shopping' },
-  { to: '/meal-plan', icon: CalendarDays, label: 'Meal Plan' },
+  { to: '/shopping', icon: ShoppingCart, label: 'Shop' },
+  { to: '/meal-plan', icon: CalendarDays, label: 'Meals' },
+  { to: '/shopping/history', icon: History, label: 'History' },
   { to: '/settings', icon: Settings, label: 'Settings' },
+  { to: '/help', icon: HelpCircle, label: 'About' },
 ];
 
 export function MobileNav() {
   return (
     <nav className="lg:hidden fixed bottom-0 left-0 right-0 z-50 bg-white border-t border-card-border">
-      <div className="flex items-center justify-around h-16 px-2">
+      <div className="flex items-center justify-around h-16 px-1">
         {tabs.map((tab) => (
           <NavLink
             key={tab.to}
@@ -21,7 +23,7 @@ export function MobileNav() {
             end={tab.to === '/'}
             className={({ isActive }) =>
               cn(
-                'flex flex-col items-center gap-0.5 px-3 py-1.5 rounded-xl transition-colors min-w-[56px]',
+                'flex flex-col items-center gap-0.5 px-1.5 py-1.5 rounded-xl transition-colors min-w-[44px]',
                 isActive ? 'text-primary' : 'text-muted'
               )
             }

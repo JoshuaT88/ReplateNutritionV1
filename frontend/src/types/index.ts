@@ -29,6 +29,9 @@ export interface UserPreferences {
   mealReminders: boolean;
   shoppingAlerts: boolean;
   priceDropAlerts: boolean;
+  emailNotificationsEnabled: boolean;
+  emailNotificationsDisclosureAccepted: boolean;
+  emailNotificationsDisclosureAcceptedAt: string | null;
 }
 
 // ============ Profiles ============
@@ -162,6 +165,18 @@ export interface ShoppingHistory {
   receiptUrls: string[];
   notes: string | null;
   createdAt: string;
+}
+
+export interface ReceiptOcrResult {
+  storeName: string | null;
+  storeAddress: string | null;
+  date: string | null;
+  items: { itemName: string; price: number; quantity: number }[];
+  subtotal: number | null;
+  tax: number | null;
+  total: number | null;
+  receiptUrl: string;
+  pricesSubmitted: number;
 }
 
 // ============ Shopping Session ============

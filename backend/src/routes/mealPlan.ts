@@ -1,6 +1,7 @@
 import { Router, Response, NextFunction } from 'express';
 import { authenticate, AuthRequest } from '../middleware/auth.js';
 import * as mealPlanService from '../services/mealPlan.service.js';
+import { firstParam } from '../utils/http.js';
 
 const router = Router();
 router.use(authenticate);
@@ -27,22 +28,24 @@ router.post('/', async (req: AuthRequest, res: Response, next: NextFunction) => 
 
 router.post('/generate', async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
-    const { profileIds, date, mealTypes, days } = req.body;
-    const meals = await mealPlanService.generateMealPlan(req.user!.userId, profileIds, date, mealTypes, days || 7);
+    const { profileIds, date, mealTypes, days, dietaryGoals } = req.body;
+    const meals = await mealPlanService.generateMealPlan(req.user!.userId, profileIds, date, mealTypes, days || 7, dietaryGoals);
     res.status(201).json(meals);
   } catch (err) { next(err); }
 });
 
 router.put('/:id', async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
-    const meal = await mealPlanService.updateMealPlan(req.user!.userId, req.params.id, req.body);
+    const mealId = firstParam(req.params.id);
+    const meal = await mealPlanService.updateMealPlan(req.user!.userId, mealId!, req.body);
     res.json(meal);
   } catch (err) { next(err); }
 });
 
 router.delete('/:id', async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
-    await mealPlanService.deleteMealPlan(req.user!.userId, req.params.id);
+    const mealId = firstParam(req.params.id);
+    await mealPlanService.deleteMealPlan(req.user!.userId, mealId!);
     res.json({ success: true });
   } catch (err) { next(err); }
 });

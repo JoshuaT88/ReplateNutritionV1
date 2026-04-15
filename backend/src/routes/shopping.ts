@@ -1,6 +1,7 @@
 import { Router, Response, NextFunction } from 'express';
 import { authenticate, AuthRequest } from '../middleware/auth.js';
 import * as shoppingService from '../services/shopping.service.js';
+import { firstParam } from '../utils/http.js';
 
 const router = Router();
 router.use(authenticate);
@@ -21,14 +22,16 @@ router.post('/list', async (req: AuthRequest, res: Response, next: NextFunction)
 
 router.put('/list/:id', async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
-    const item = await shoppingService.updateShoppingItem(req.user!.userId, req.params.id, req.body);
+    const itemId = firstParam(req.params.id);
+    const item = await shoppingService.updateShoppingItem(req.user!.userId, itemId!, req.body);
     res.json(item);
   } catch (err) { next(err); }
 });
 
 router.delete('/list/:id', async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
-    await shoppingService.deleteShoppingItem(req.user!.userId, req.params.id);
+    const itemId = firstParam(req.params.id);
+    await shoppingService.deleteShoppingItem(req.user!.userId, itemId!);
     res.json({ success: true });
   } catch (err) { next(err); }
 });
@@ -66,15 +69,18 @@ router.post('/session', async (req: AuthRequest, res: Response, next: NextFuncti
 
 router.get('/session/:sessionId', async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
-    const session = await shoppingService.getShoppingSession(req.user!.userId, req.params.sessionId);
+    const sessionId = firstParam(req.params.sessionId);
+    const session = await shoppingService.getShoppingSession(req.user!.userId, sessionId!);
     res.json(session);
   } catch (err) { next(err); }
 });
 
 router.put('/session/:sessionId/items/:itemId', async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
+    const sessionId = firstParam(req.params.sessionId);
+    const itemId = firstParam(req.params.itemId);
     const result = await shoppingService.updateSessionItem(
-      req.user!.userId, req.params.sessionId, req.params.itemId, req.body
+      req.user!.userId, sessionId!, itemId!, req.body
     );
     res.json(result);
   } catch (err) { next(err); }
@@ -83,8 +89,10 @@ router.put('/session/:sessionId/items/:itemId', async (req: AuthRequest, res: Re
 router.post('/session/:sessionId/items/:itemId/price', async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     const { price } = req.body;
+    const sessionId = firstParam(req.params.sessionId);
+    const itemId = firstParam(req.params.itemId);
     const result = await shoppingService.submitSessionPrice(
-      req.user!.userId, req.params.sessionId, req.params.itemId, price
+      req.user!.userId, sessionId!, itemId!, price
     );
     res.json(result);
   } catch (err) { next(err); }
@@ -93,8 +101,10 @@ router.post('/session/:sessionId/items/:itemId/price', async (req: AuthRequest, 
 router.post('/session/:sessionId/items/:itemId/aisle', async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     const { aisle } = req.body;
+    const sessionId = firstParam(req.params.sessionId);
+    const itemId = firstParam(req.params.itemId);
     const result = await shoppingService.saveAisleLocation(
-      req.user!.userId, req.params.sessionId, req.params.itemId, aisle
+      req.user!.userId, sessionId!, itemId!, aisle
     );
     res.json(result);
   } catch (err) { next(err); }
@@ -102,7 +112,8 @@ router.post('/session/:sessionId/items/:itemId/aisle', async (req: AuthRequest, 
 
 router.post('/session/:sessionId/end', async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
-    const history = await shoppingService.endShoppingSession(req.user!.userId, req.params.sessionId);
+    const sessionId = firstParam(req.params.sessionId);
+    const history = await shoppingService.endShoppingSession(req.user!.userId, sessionId!);
     res.json(history);
   } catch (err) { next(err); }
 });
