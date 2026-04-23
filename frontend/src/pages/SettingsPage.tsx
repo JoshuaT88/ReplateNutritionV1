@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   User, Shield, Bell, Database, Info, LogOut, Trash2, Download,
@@ -25,6 +25,51 @@ export default function SettingsPage() {
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
+  const [pushEnabled, setPushEnabled] = useState(false);
+  const [pushLoading, setPushLoading] = useState(false);
+
+  // Check push subscription status on mount
+  useEffect(() => {
+    if ('serviceWorker' in navigator && 'PushManager' in window) {
+      navigator.serviceWorker.ready.then((reg) => {
+        reg.pushManager.getSubscription().then((sub) => setPushEnabled(!!sub));
+      });
+    }
+  }, []);
+
+  const handlePushToggle = async (enable: boolean) => {
+    if (pushLoading) return;
+    setPushLoading(true);
+    try {
+      const reg = await navigator.serviceWorker.ready;
+      if (enable) {
+        const { publicKey } = await api.getVapidPublicKey();
+        if (!publicKey) throw new Error('Push not configured on server');
+        const permission = await Notification.requestPermission();
+        if (permission !== 'granted') throw new Error('Permission denied');
+        const sub = await reg.pushManager.subscribe({
+          userVisibleOnly: true,
+          applicationServerKey: publicKey,
+        });
+        const json = sub.toJSON() as { endpoint: string; keys: { p256dh: string; auth: string } };
+        await api.subscribePush(json);
+        setPushEnabled(true);
+        toast('success', 'Push notifications enabled');
+      } else {
+        const sub = await reg.pushManager.getSubscription();
+        if (sub) {
+          await api.unsubscribePush(sub.endpoint);
+          await sub.unsubscribe();
+        }
+        setPushEnabled(false);
+        toast('success', 'Push notifications disabled');
+      }
+    } catch (err: any) {
+      toast('error', 'Push setup failed', err.message);
+    } finally {
+      setPushLoading(false);
+    }
+  };
 
   const { data: preferences } = useQuery({
     queryKey: ['preferences'],
@@ -150,6 +195,21 @@ export default function SettingsPage() {
               }}
             />
           </SettingsRow>
+          <SettingsRow label="Timezone" value={preferences?.timezone || 'America/New_York'}>
+            <select
+              defaultValue={preferences?.timezone || 'America/New_York'}
+              className="flex h-9 rounded-xl border border-card-border bg-white px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary"
+              onChange={(e) => updatePreferencesMutation.mutate({ timezone: e.target.value })}
+            >
+              {[
+                'America/New_York', 'America/Chicago', 'America/Denver',
+                'America/Los_Angeles', 'America/Phoenix', 'America/Anchorage',
+                'Pacific/Honolulu', 'America/Puerto_Rico',
+              ].map((tz) => (
+                <option key={tz} value={tz}>{tz.replace('America/', '').replace('Pacific/', 'Pacific/').replace(/_/g, ' ')}</option>
+              ))}
+            </select>
+          </SettingsRow>
         </div>
       </SettingsSection>
 
@@ -217,6 +277,15 @@ export default function SettingsPage() {
           onChange={(v) => updatePreferencesMutation.mutate({ priceDropAlerts: v })}
           disabled={!emailNotificationsEnabled}
         />
+        {'serviceWorker' in navigator && 'PushManager' in window && (
+          <ToggleRow
+            label="Push notifications"
+            description="Receive browser push notifications for meal reminders and alerts"
+            value={pushEnabled}
+            onChange={handlePushToggle}
+            disabled={pushLoading}
+          />
+        )}
       </SettingsSection>
 
       {/* Data & Privacy */}

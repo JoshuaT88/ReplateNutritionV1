@@ -4,82 +4,10 @@ import { AppError } from '../middleware/errorHandler.js';
 import * as aiService from './ai.service.js';
 import { searchNearbyStores } from './store.service.js';
 import { emailNotificationsConfigured, sendShoppingAlertEmail } from './notification.service.js';
-
-// Hardcoded grocery category lookup to avoid AI calls per ingredient
-const GROCERY_CATEGORY_MAP: Record<string, string[]> = {
-  'Produce': [
-    'apple', 'banana', 'orange', 'lemon', 'lime', 'grape', 'strawberry', 'blueberry', 'raspberry',
-    'blackberry', 'mango', 'pineapple', 'watermelon', 'cantaloupe', 'peach', 'pear', 'plum', 'cherry',
-    'avocado', 'tomato', 'potato', 'sweet potato', 'onion', 'garlic', 'ginger', 'carrot', 'celery',
-    'broccoli', 'cauliflower', 'spinach', 'kale', 'lettuce', 'romaine', 'arugula', 'cabbage', 'cucumber',
-    'zucchini', 'squash', 'bell pepper', 'pepper', 'jalapeno', 'mushroom', 'corn', 'green bean',
-    'asparagus', 'artichoke', 'beet', 'radish', 'turnip', 'parsnip', 'eggplant', 'pea', 'edamame',
-    'cilantro', 'parsley', 'basil', 'mint', 'dill', 'thyme', 'rosemary', 'sage', 'chive', 'scallion',
-    'green onion', 'shallot', 'leek', 'fennel', 'bok choy', 'collard', 'swiss chard',
-  ],
-  'Dairy': [
-    'milk', 'cheese', 'butter', 'yogurt', 'cream', 'sour cream', 'cream cheese', 'cottage cheese',
-    'ricotta', 'mozzarella', 'cheddar', 'parmesan', 'feta', 'gouda', 'brie', 'goat cheese',
-    'whipped cream', 'half and half', 'buttermilk', 'ghee', 'egg', 'eggs',
-  ],
-  'Meat & Seafood': [
-    'chicken', 'beef', 'pork', 'turkey', 'lamb', 'veal', 'bison', 'duck', 'steak', 'ground beef',
-    'ground turkey', 'ground pork', 'bacon', 'sausage', 'ham', 'salami', 'prosciutto', 'pepperoni',
-    'salmon', 'tuna', 'shrimp', 'cod', 'tilapia', 'halibut', 'mahi', 'crab', 'lobster', 'scallop',
-    'clam', 'mussel', 'oyster', 'sardine', 'anchovy', 'trout', 'catfish', 'fish', 'filet mignon',
-    'ribeye', 'sirloin', 'tenderloin', 'chuck', 'brisket', 'ribs', 'wing', 'thigh', 'breast',
-    'drumstick',
-  ],
-  'Pantry': [
-    'rice', 'pasta', 'noodle', 'flour', 'sugar', 'salt', 'oil', 'olive oil', 'coconut oil',
-    'vegetable oil', 'vinegar', 'soy sauce', 'balsamic', 'honey', 'maple syrup', 'molasses',
-    'cereal', 'oat', 'oatmeal', 'granola', 'quinoa', 'couscous', 'barley', 'lentil', 'bean',
-    'chickpea', 'black bean', 'kidney bean', 'pinto bean', 'canned', 'broth', 'stock', 'soup',
-    'tomato sauce', 'tomato paste', 'salsa', 'hot sauce', 'ketchup', 'mustard', 'mayonnaise',
-    'peanut butter', 'almond butter', 'jam', 'jelly', 'nutella', 'chocolate', 'cocoa', 'vanilla',
-    'baking soda', 'baking powder', 'yeast', 'cornstarch', 'breadcrumb', 'crouton', 'nut',
-    'almond', 'walnut', 'pecan', 'cashew', 'peanut', 'pistachio', 'seed', 'chia', 'flax',
-    'sunflower', 'sesame', 'coconut', 'dried fruit', 'raisin', 'cranberry', 'spice', 'cinnamon',
-    'cumin', 'paprika', 'turmeric', 'oregano', 'chili powder', 'curry', 'bay leaf', 'nutmeg',
-    'clove', 'cardamom', 'coriander', 'black pepper', 'red pepper', 'garlic powder', 'onion powder',
-    'tortilla', 'wrap', 'taco shell', 'cracker', 'chip',
-  ],
-  'Bakery': [
-    'bread', 'bagel', 'muffin', 'croissant', 'roll', 'baguette', 'pita', 'naan', 'bun', 'cake',
-    'pie', 'pastry', 'donut', 'cookie', 'brownie', 'scone', 'danish', 'sourdough', 'rye',
-    'brioche', 'english muffin', 'flatbread', 'cornbread',
-  ],
-  'Frozen': [
-    'frozen', 'ice cream', 'popsicle', 'frozen pizza', 'frozen dinner', 'frozen vegetable',
-    'frozen fruit', 'frozen waffle', 'frozen fish', 'frozen chicken', 'sorbet', 'gelato',
-  ],
-  'Beverages': [
-    'juice', 'water', 'soda', 'coffee', 'tea', 'kombucha', 'smoothie', 'lemonade', 'coconut water',
-    'almond milk', 'oat milk', 'soy milk', 'energy drink', 'sparkling water', 'seltzer', 'wine',
-    'beer', 'cider',
-  ],
-  'Snacks': [
-    'chips', 'popcorn', 'pretzel', 'trail mix', 'granola bar', 'protein bar', 'jerky', 'dried',
-    'rice cake', 'fruit snack', 'gummy', 'candy',
-  ],
-  'Condiments': [
-    'dressing', 'ranch', 'marinade', 'bbq sauce', 'teriyaki', 'worcestershire', 'fish sauce',
-    'oyster sauce', 'hoisin', 'sriracha', 'tahini', 'hummus', 'guacamole', 'relish', 'chutney',
-    'pickle', 'olive', 'caper', 'anchovy paste',
-  ],
-  'Pet Food': [
-    'dog food', 'cat food', 'kibble', 'pet treat', 'dog treat', 'cat treat', 'pet food',
-  ],
-};
+import { categorizeItem } from '../data/groceryReferenceData.js';
 
 function categorizeGroceryItem(itemName: string): string {
-  const lower = itemName.toLowerCase();
-  for (const [category, keywords] of Object.entries(GROCERY_CATEGORY_MAP)) {
-    for (const keyword of keywords) {
-      if (lower.includes(keyword)) return category;
-    }
-  }
-  return 'Other';
+  return categorizeItem(itemName) ?? 'Other';
 }
 
 async function sendShoppingAlertIfEnabled(
@@ -218,7 +146,7 @@ export async function generateFromMealPlans(userId: string, profileIds: string[]
 
   await sendShoppingAlertIfEnabled(
     userId,
-    created,
+    created.map((i) => ({ itemName: i.itemName, quantity: i.quantity, category: i.category })),
     `items were added from your meal plan for the next ${days} day${days > 1 ? 's' : ''}`
   );
 
@@ -307,8 +235,9 @@ export async function startShoppingSession(userId: string, storeName?: string) {
     let aisleHint = 'Unknown';
     if (storeName) {
       // Check DB for known aisle
-      const known = await prisma.aisleLocation.findUnique({
-        where: { itemName_storeName: { itemName: item.itemName, storeName } },
+      const known = await prisma.aisleLocation.findFirst({
+        where: { itemName: item.itemName, storeName },
+        orderBy: { verifiedCount: 'desc' },
       });
       if (known) {
         aisleHint = known.aisleLocation;
@@ -387,8 +316,9 @@ export async function getShoppingSession(userId: string, sessionId: string) {
       .map(async (item) => {
         let aisleHint = item.category || 'Unknown';
         if (storeName) {
-          const known = await prisma.aisleLocation.findUnique({
-            where: { itemName_storeName: { itemName: item.itemName, storeName } },
+          const known = await prisma.aisleLocation.findFirst({
+            where: { itemName: item.itemName, storeName },
+            orderBy: { verifiedCount: 'desc' },
           });
           if (known) aisleHint = known.aisleLocation;
         }
@@ -589,9 +519,9 @@ export async function saveAisleLocation(
 
   // Upsert aisle location for this item+store combo
   await prisma.aisleLocation.upsert({
-    where: { itemName_storeName: { itemName: item.itemName, storeName } },
+    where: { itemName_storeName_zipRegion: { itemName: item.itemName, storeName, zipRegion: '' } },
     update: { aisleLocation },
-    create: { itemName: item.itemName, storeName, aisleLocation },
+    create: { itemName: item.itemName, storeName, zipRegion: '', aisleLocation },
   });
 
   return { success: true };

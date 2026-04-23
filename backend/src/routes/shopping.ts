@@ -118,4 +118,24 @@ router.post('/session/:sessionId/end', async (req: AuthRequest, res: Response, n
   } catch (err) { next(err); }
 });
 
+// POST /shopping/session/:sessionId/add-item — add an item mid-session
+router.post('/session/:sessionId/add-item', async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const sessionId = firstParam(req.params.sessionId);
+    const { itemName, quantity, category, notes } = req.body;
+    if (!itemName?.trim()) {
+      res.status(400).json({ error: 'itemName is required' }); return;
+    }
+    // Add to the user's shopping list first, then the session picks it up on next refresh
+    const item = await shoppingService.addShoppingItem(req.user!.userId, {
+      itemName: itemName.trim(),
+      quantity: quantity || null,
+      category: category || null,
+      notes: notes || null,
+      priority: 'MEDIUM',
+    });
+    res.status(201).json(item);
+  } catch (err) { next(err); }
+});
+
 export default router;

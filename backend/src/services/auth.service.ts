@@ -66,13 +66,24 @@ export async function logout(refreshToken: string) {
 
 export async function forgotPassword(email: string) {
   const user = await prisma.user.findUnique({ where: { email } });
-  if (!user) return; // Don't reveal if email exists
+  if (!user) return; // Don't reveal whether email exists
+
+  // Expire any existing tokens for this user
+  await prisma.passwordResetToken.deleteMany({ where: { userId: user.id } });
 
   const resetToken = crypto.randomBytes(32).toString('hex');
+  const expiresAt = new Date(Date.now() + 60 * 60_000); // 1 hour
+
+  await prisma.passwordResetToken.create({
+    data: {
+      token: resetToken,
+      userId: user.id,
+      expiresAt,
+    },
+  });
+
   const resetUrl = `${env.FRONTEND_URL}/reset-password?token=${resetToken}`;
 
-  // Store token in Redis or a simple DB field (using Redis for expiry)
-  // For simplicity, we'll use a hash as a temporary password reset mechanism
   if (resend) {
     await resend.emails.send({
       from: env.FROM_EMAIL,
@@ -83,7 +94,7 @@ export async function forgotPassword(email: string) {
           <h2 style="color: #0F172A;">Reset Your Password</h2>
           <p style="color: #64748B;">Click the link below to reset your password. This link expires in 1 hour.</p>
           <a href="${resetUrl}" style="display: inline-block; padding: 12px 24px; background: #3B82F6; color: white; border-radius: 12px; text-decoration: none; margin-top: 16px;">Reset Password</a>
-          <p style="color: #94A3B8; font-size: 13px; margin-top: 24px;">If you didn't request this, you can ignore this email.</p>
+          <p style="color: #94A3B8; font-size: 13px; margin-top: 24px;">If you didn't request this, you can safely ignore this email.</p>
         </div>
       `,
     });
@@ -91,10 +102,34 @@ export async function forgotPassword(email: string) {
 }
 
 export async function resetPassword(token: string, newPassword: string) {
-  // In production, validate the token against stored reset tokens
-  // For now, this is a placeholder that shows the intended flow
+  if (!token || !newPassword) throw new AppError(400, 'Token and new password are required');
+  if (newPassword.length < 8) throw new AppError(400, 'Password must be at least 8 characters');
+
+  const record = await prisma.passwordResetToken.findUnique({ where: { token } });
+
+  if (!record) throw new AppError(400, 'Invalid or expired reset link. Please request a new one.');
+  if (record.usedAt) throw new AppError(400, 'This reset link has already been used.');
+  if (record.expiresAt < new Date()) {
+    await prisma.passwordResetToken.delete({ where: { id: record.id } });
+    throw new AppError(400, 'Reset link has expired. Please request a new one.');
+  }
+
   const passwordHash = await bcrypt.hash(newPassword, SALT_ROUNDS);
-  // TODO: Look up user by reset token, update password
+
+  // Use a transaction: mark token as used + update password atomically
+  await prisma.$transaction([
+    prisma.passwordResetToken.update({
+      where: { id: record.id },
+      data: { usedAt: new Date() },
+    }),
+    prisma.user.update({
+      where: { id: record.userId },
+      data: { passwordHash },
+    }),
+    // Invalidate all existing refresh tokens for this user (force re-login)
+    prisma.refreshToken.deleteMany({ where: { userId: record.userId } }),
+  ]);
+
   return { success: true };
 }
 

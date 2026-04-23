@@ -334,6 +334,76 @@ class ApiClient {
     return this.request('/pricing/submit', { method: 'POST', body: JSON.stringify(data) });
   }
 
+  // === Support ===
+  reportIssue(data: { description: string; workflow?: string; route?: string; metadata?: Record<string, unknown> }) {
+    return this.request<{ success: boolean; message: string }>('/support/report', {
+      method: 'POST', body: JSON.stringify(data),
+    });
+  }
+  submitFeedback(data: { type: 'feature' | 'improvement' | 'general'; subject: string; description: string }) {
+    return this.request<{ success: boolean; message: string }>('/support/feedback', {
+      method: 'POST', body: JSON.stringify(data),
+    });
+  }
+
+  // === Macros ===
+  getMacros(date?: string) {
+    const q = date ? `?date=${date}` : '';
+    return this.request<{ logs: any[]; totals: any; date: string }>(`/macros${q}`);
+  }
+  getMacroSummary(days = 7) {
+    return this.request<{ summary: Record<string, any>; days: number }>(`/macros/summary?days=${days}`);
+  }
+  logMacro(data: { date?: string; mealName: string; calories?: number; protein?: number; carbs?: number; fat?: number; fiber?: number; notes?: string }) {
+    return this.request<any>('/macros', { method: 'POST', body: JSON.stringify(data) });
+  }
+  updateMacro(id: string, data: Partial<{ mealName: string; calories: number; protein: number; carbs: number; fat: number; fiber: number; notes: string }>) {
+    return this.request<any>(`/macros/${id}`, { method: 'PUT', body: JSON.stringify(data) });
+  }
+  deleteMacro(id: string) {
+    return this.request(`/macros/${id}`, { method: 'DELETE' });
+  }
+
+  // === Share ===
+  createShareLink() {
+    return this.request<{ token: string; url: string; expiresAt: string }>('/share', { method: 'POST' });
+  }
+  getShareSnapshot(token: string) {
+    return this.request<{ snapshot: any[]; createdAt: string; expiresAt: string }>(`/share/${token}`);
+  }
+
+  // === Push Notifications ===
+  getVapidPublicKey() {
+    return this.request<{ configured: boolean; publicKey: string | null }>('/push/vapid-public-key');
+  }
+  subscribePush(subscription: { endpoint: string; keys: { p256dh: string; auth: string } }) {
+    return this.request<{ success: boolean }>('/push/subscribe', {
+      method: 'POST', body: JSON.stringify(subscription),
+    });
+  }
+  unsubscribePush(endpoint: string) {
+    return this.request('/push/subscribe', {
+      method: 'DELETE', body: JSON.stringify({ endpoint }),
+    });
+  }
+
+  // === Kroger / Aisle Seeding ===
+  seedAislesFromKroger(data: { zipCode: string; storeName: string }) {
+    return this.request<{ seeded: number; items: string[]; message?: string }>('/aisles/seed-kroger', {
+      method: 'POST', body: JSON.stringify(data),
+    });
+  }
+  getKrogerStores(zipCode: string) {
+    return this.request<any[]>(`/aisles/kroger-stores?zipCode=${zipCode}`);
+  }
+
+  // === Session add-item ===
+  addItemToSession(sessionId: string, data: { itemName: string; quantity?: string; category?: string; notes?: string }) {
+    return this.request<any>(`/shopping/session/${sessionId}/add-item`, {
+      method: 'POST', body: JSON.stringify(data),
+    });
+  }
+
   // === Account ===
   changePassword(currentPassword: string, newPassword: string) {
     return this.request('/users/me/password', {

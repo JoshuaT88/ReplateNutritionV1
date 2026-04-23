@@ -5,17 +5,55 @@
 @layer base {
   * {
     border-color: theme('colors.card.border');
+    box-sizing: border-box;
+  }
+
+  :root {
+    --color-background: #FAFAF9;
+    --color-foreground: #0F172A;
+    --color-card: #FFFFFF;
+    --color-card-border: #E2E8F0;
+    --color-primary: #3B82F6;
+    --color-muted: #64748B;
+    --color-sidebar-bg: #0F172A;
+  }
+
+  .dark {
+    --color-background: #0F172A;
+    --color-foreground: #F1F5F9;
+    --color-card: #1E293B;
+    --color-card-border: #334155;
+    --color-primary: #60A5FA;
+    --color-muted: #94A3B8;
+    --color-sidebar-bg: #020617;
   }
 
   body {
     font-family: 'Inter', system-ui, sans-serif;
-    background: linear-gradient(180deg, #FAFAF9 0%, #F1F5F9 100%);
+    background: var(--color-background);
+    color: var(--color-foreground);
     min-height: 100vh;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  /* Prevent content from hiding behind iOS home bar */
+  .safe-area-bottom {
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+  .safe-area-top {
+    padding-top: env(safe-area-inset-top, 0px);
   }
 
   ::selection {
     background: theme('colors.primary.light');
     color: theme('colors.primary.dark');
+  }
+
+  /* Better tap targets on mobile */
+  button, a, [role="button"] {
+    -webkit-tap-highlight-color: transparent;
+    touch-action: manipulation;
   }
 }
 
@@ -25,20 +63,36 @@
     background-size: 200% 100%;
     animation: shimmer 2s infinite linear;
   }
+
+  /* Fluid font sizes — scale down on small screens */
+  .text-fluid-sm  { font-size: clamp(0.75rem, 2vw, 0.875rem); }
+  .text-fluid-md  { font-size: clamp(0.875rem, 2.5vw, 1rem); }
+  .text-fluid-lg  { font-size: clamp(1rem, 3vw, 1.25rem); }
+  .text-fluid-xl  { font-size: clamp(1.25rem, 4vw, 1.875rem); }
+  .text-fluid-2xl { font-size: clamp(1.5rem, 5vw, 2.25rem); }
+
+  /* Horizontal scroll with hidden scrollbar for tag rows */
+  .scroll-x-hidden {
+    overflow-x: auto;
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+  }
+  .scroll-x-hidden::-webkit-scrollbar { display: none; }
+
+  /* Green health accent helpers */
+  .badge-health  { @apply bg-accent-green-light text-accent-green border border-accent-green/20 rounded-full px-2.5 py-0.5 text-xs font-semibold; }
+  .badge-success { @apply bg-emerald-50 text-emerald-700 border border-emerald-200 rounded-full px-2.5 py-0.5 text-xs font-semibold; }
 }
 
 /* Custom scrollbar */
-::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
-}
-::-webkit-scrollbar-track {
-  background: transparent;
-}
-::-webkit-scrollbar-thumb {
-  background: #CBD5E1;
-  border-radius: 3px;
-}
-::-webkit-scrollbar-thumb:hover {
-  background: #94A3B8;
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #CBD5E1; border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: #94A3B8; }
+
+/* Page transition fade */
+.page-enter { animation: page-in 0.22s ease-out both; }
+@keyframes page-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
 }

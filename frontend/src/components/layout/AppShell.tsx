@@ -1,14 +1,28 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Outlet } from 'react-router-dom';
 import { Sidebar } from './Sidebar';
 import { MobileNav } from './MobileNav';
 import { OnboardingFlow } from '../onboarding/OnboardingFlow';
 import { useAuth } from '@/contexts/AuthContext';
 
+function useIsDesktop() {
+  const [isDesktop, setIsDesktop] = useState(() =>
+    typeof window !== 'undefined' ? window.innerWidth >= 1024 : false
+  );
+  useEffect(() => {
+    const mq = window.matchMedia('(min-width: 1024px)');
+    const handler = (e: MediaQueryListEvent) => setIsDesktop(e.matches);
+    mq.addEventListener('change', handler);
+    return () => mq.removeEventListener('change', handler);
+  }, []);
+  return isDesktop;
+}
+
 export function AppShell({ children }: { children?: React.ReactNode }) {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const { preferences, refreshPreferences } = useAuth();
   const [onboardingDismissed, setOnboardingDismissed] = useState(false);
+  const isDesktop = useIsDesktop();
 
   const showOnboarding = !onboardingDismissed && preferences && !preferences.firstVisitCompleted;
 
@@ -23,18 +37,22 @@ export function AppShell({ children }: { children?: React.ReactNode }) {
     );
   }
 
+  const sidebarWidth = sidebarCollapsed ? 72 : 280;
+
   return (
     <div className="min-h-screen bg-background">
       {/* Desktop sidebar */}
-      <aside className="hidden lg:fixed lg:inset-y-0 lg:left-0 lg:flex lg:flex-col z-40"
-        style={{ width: sidebarCollapsed ? 72 : 280 }}>
+      <aside
+        className="hidden lg:fixed lg:inset-y-0 lg:left-0 lg:flex lg:flex-col z-40 transition-all duration-300"
+        style={{ width: sidebarWidth }}
+      >
         <Sidebar collapsed={sidebarCollapsed} onToggle={() => setSidebarCollapsed(!sidebarCollapsed)} />
       </aside>
 
       {/* Main content */}
       <main
         className="min-h-screen transition-all duration-300 pb-20 lg:pb-0"
-        style={{ marginLeft: typeof window !== 'undefined' && window.innerWidth >= 1024 ? (sidebarCollapsed ? 72 : 280) : 0 }}
+        style={{ marginLeft: isDesktop ? sidebarWidth : 0 }}
       >
         <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-6 lg:py-8">
           {children || <Outlet />}

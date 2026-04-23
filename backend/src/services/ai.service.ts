@@ -1,5 +1,12 @@
 import OpenAI from 'openai';
 import { env } from '../config/env.js';
+import {
+  isGroceryItem,
+  categorizeItem,
+  predictAisleLocally,
+  buildPriceReferenceContext,
+  getStoreTier,
+} from '../data/groceryReferenceData.js';
 
 const openai = new OpenAI({ apiKey: env.OPENAI_API_KEY });
 
@@ -16,14 +23,42 @@ interface ProfileContext {
   foodDislikes: string[];
 }
 
-const SYSTEM_PROMPT = `You are a nutritionist assistant for the Replate Nutrition app. You help households (humans and pets) with dietary recommendations, meal planning, and shopping.
+const SYSTEM_PROMPT = `You are a registered dietitian and nutrition assistant for the Replate Nutrition app. You help households (humans and pets) with evidence-based dietary recommendations, practical meal planning, and smart grocery shopping.
 
-CRITICAL SAFETY RULES:
-- NEVER recommend items that conflict with listed allergies or restrictions. This is a health-critical requirement.
-- Always respect intolerances and special conditions.
-- For pets, only recommend species-appropriate foods.
-- When recommending for special conditions (e.g., Autism/ARFID, Celiac, Diabetes), tailor recommendations to those needs.
-- Always respond in valid JSON format when asked for structured data.`;
+CRITICAL SAFETY RULES — these override everything else:
+- NEVER recommend items that conflict with listed allergies or restrictions. Allergy violations can cause anaphylaxis or death.
+- Always respect intolerances, special conditions, and dietary restrictions exactly as listed.
+- For pets, ONLY recommend species-appropriate foods. Never suggest toxic items (e.g., grapes/raisins for dogs, onions/garlic for cats).
+- When a profile has special conditions (e.g., Autism/ARFID, Celiac, Diabetes, PKU, Kidney disease), tailor every recommendation specifically to those constraints.
+- For ARFID profiles: prioritize familiar textures, predictable presentations, limited sensory variation. Avoid surprise ingredients.
+- For Celiac profiles: verify all items are certified gluten-free. Mention cross-contamination risks.
+- For Diabetes profiles: prioritize low glycemic index, high fiber, controlled carbohydrates.
+
+QUALITY RULES:
+- Always respond in valid JSON format when asked for structured data.
+- Be specific — name exact products, cuts, and varieties (e.g., "boneless skinless chicken thighs" not just "chicken").
+- Provide accurate nutritional context, not vague generalities.
+- Meal variety is important — if recent meals are provided, actively avoid repeating them.`;
+
+/** Retry an async function up to maxAttempts times on transient errors. */
+async function withRetry<T>(fn: () => Promise<T>, maxAttempts = 2): Promise<T> {
+  let lastErr: unknown;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      return await fn();
+    } catch (err: unknown) {
+      lastErr = err;
+      const isTransient =
+        err instanceof Error &&
+        (err.message.includes('timeout') ||
+          err.message.includes('rate_limit') ||
+          err.message.includes('503') ||
+          err.message.includes('529'));
+      if (!isTransient || attempt === maxAttempts) throw err;
+    }
+  }
+  throw lastErr;
+}
 
 function buildProfileConstraints(profile: ProfileContext): string {
   const lines = [`Profile: ${profile.name} (${profile.type}${profile.petType ? ` - ${profile.petType}` : ''})`];
@@ -103,7 +138,7 @@ Return JSON with this structure:
   ]
 }`;
 
-  const response = await openai.chat.completions.create({
+  const response = await withRetry(() => openai.chat.completions.create({
     model: 'gpt-4o',
     response_format: { type: 'json_object' },
     messages: [
@@ -112,7 +147,7 @@ Return JSON with this structure:
     ],
     temperature: 0.7,
     max_tokens: 4000,
-  });
+  }));
 
   const content = response.choices[0]?.message?.content;
   if (!content) throw new Error('No response from AI');
@@ -148,7 +183,7 @@ export async function generateMeals(
     ? `for ${dateList[0]}`
     : `for EACH of these dates: ${dateList.join(', ')}`;
 
-  const response = await openai.chat.completions.create({
+  const response = await withRetry(() => openai.chat.completions.create({
     model: 'gpt-4o',
     response_format: { type: 'json_object' },
     messages: [
@@ -184,9 +219,9 @@ Return JSON:
 ${dateList.length > 1 ? `Expected total: approximately ${dateList.length * profiles.length * mealTypes.length} meals (${dateList.length} days × ${profiles.length} profiles × ${mealTypes.length} meal types).` : ''}`,
       },
     ],
-    temperature: 0.8,
-    max_tokens: Math.min(16384, dateList.length * profiles.length * mealTypes.length * 150 + 500),
-  });
+    temperature: 0.75,
+    max_tokens: Math.min(16384, dateList.length * profiles.length * mealTypes.length * 160 + 500),
+  }));
 
   const content = response.choices[0]?.message?.content;
   if (!content) throw new Error('No response from AI');
@@ -194,40 +229,76 @@ ${dateList.length > 1 ? `Expected total: approximately ${dateList.length * profi
   return parsed.meals || [];
 }
 
+/**
+ * Consolidate meal plan ingredients into a de-duplicated shopping list.
+ * Locally categorizes known items (free), only asks AI for unknowns.
+ */
 export async function generateShoppingListFromMeals(
   ingredients: string[]
 ): Promise<any[]> {
-  const response = await openai.chat.completions.create({
-    model: 'gpt-4o',
-    response_format: { type: 'json_object' },
-    messages: [
-      { role: 'system', content: SYSTEM_PROMPT },
-      {
-        role: 'user',
-        content: `Consolidate these meal ingredients into a shopping list. Combine duplicates, estimate reasonable quantities for a household.
+  // Phase 1: Local categorization for known items
+  const locallyResolved: Array<{ itemName: string; category: string; quantity: string }> = [];
+  const needsAI: string[] = [];
 
-Ingredients: ${ingredients.join(', ')}
+  // Normalize and de-duplicate
+  const normalized = new Map<string, number>();
+  for (const raw of ingredients) {
+    const key = raw.toLowerCase().trim();
+    normalized.set(key, (normalized.get(key) || 0) + 1);
+  }
+
+  for (const [item, count] of normalized.entries()) {
+    const category = categorizeItem(item);
+    if (category) {
+      locallyResolved.push({
+        itemName: item.charAt(0).toUpperCase() + item.slice(1),
+        category,
+        quantity: count > 1 ? `${count}x` : '1',
+      });
+    } else {
+      // Combine duplicates for AI
+      const existing = needsAI.find((i) => i.toLowerCase() === item);
+      if (!existing) needsAI.push(count > 1 ? `${item} (×${count})` : item);
+    }
+  }
+
+  // Phase 2: AI only for items not in reference data
+  if (needsAI.length > 0) {
+    const response = await withRetry(() => openai.chat.completions.create({
+      model: 'gpt-4o',
+      response_format: { type: 'json_object' },
+      messages: [
+        { role: 'system', content: SYSTEM_PROMPT },
+        {
+          role: 'user',
+          content: `Consolidate these meal ingredients into shopping list items. Estimate reasonable household quantities.
+
+Ingredients: ${needsAI.join(', ')}
 
 Return JSON:
 {
   "items": [
     {
       "itemName": "string",
-      "category": "Produce" | "Dairy" | "Meat & Seafood" | "Pantry" | "Frozen" | "Bakery" | "Beverages" | "Snacks" | "Condiments" | "Other",
+      "category": "Produce" | "Dairy" | "Meat & Seafood" | "Pantry" | "Frozen" | "Bakery" | "Beverages" | "Snacks" | "Condiments" | "Pet Food" | "Other",
       "quantity": "string (e.g., '2 lbs', '1 gallon', '3 cans')"
     }
   ]
 }`,
-      },
-    ],
-    temperature: 0.3,
-    max_tokens: 2000,
-  });
+        },
+      ],
+      temperature: 0.3,
+      max_tokens: 1500,
+    }));
 
-  const content = response.choices[0]?.message?.content;
-  if (!content) throw new Error('No response from AI');
-  const parsed = JSON.parse(content);
-  return parsed.items || [];
+    const content = response.choices[0]?.message?.content;
+    if (content) {
+      const parsed = JSON.parse(content);
+      locallyResolved.push(...(parsed.items || []));
+    }
+  }
+
+  return locallyResolved;
 }
 
 export async function findNearbyStores(
@@ -246,20 +317,32 @@ export async function findNearbyStores(
     })
     .join('\n\n');
 
+  // Build per-store tier context for known stores
+  const storeTierContext = knownStores?.length
+    ? knownStores
+        .map((s) => `  ${s.name}: ${getStoreTier(s.name)} tier`)
+        .join('\n')
+    : '';
+
   const storeDirective = knownStores?.length
     ? `KNOWN STORES (from Google Places — use ONLY these stores, do NOT invent others):
 ${knownStores.map((s) => `- ${s.name} — ${s.address}${s.phone ? ` — ${s.phone}` : ''}${s.rating ? ` — Rating: ${s.rating}` : ''}${s.hours?.length ? ` — Hours: ${s.hours[0]}` : ''}`).join('\n')}
 
-Estimate prices for each of the above stores. Use crowd-sourced data where available and estimate the rest based on each store's typical pricing tier.`
-    : `Find ALL grocery stores within an 8-10 mile radius of ZIP code ${zipCode} and estimate the total cost of this shopping list at each store. 
+Store pricing tiers:
+${storeTierContext}
 
-IMPORTANT: 
+Estimate prices for each store. Use crowd-sourced data where available, then reference prices below, then adjust for store tier.`
+    : `Find ALL grocery stores within an 8-10 mile radius of ZIP code ${zipCode} and estimate the total cost of this shopping list at each store.
+
+IMPORTANT:
 - Include ALL major grocery stores within 8-10 miles (at least 6-10 stores).
-- Include budget stores (Walmart, Aldi, Lidl, Dollar General), mid-range (Kroger, Publix, HEB, Safeway, Meijer, Food Lion), and premium (Whole Foods, Trader Joe's, Sprouts, Fresh Market).
-- Also include warehouse clubs (Costco, Sam's Club, BJ's) if nearby.
-- DO NOT limit to just the same ZIP code — include surrounding areas within the 8-10 mile radius.`;
+- Include budget stores (Walmart, Aldi, Lidl), mid-range (Kroger, Publix, HEB, Safeway, Meijer, Food Lion), and premium (Whole Foods, Trader Joe's, Sprouts).
+- Also include warehouse clubs (Costco, Sam's Club) if nearby.
+- DO NOT limit to just the same ZIP code — include surrounding areas.`;
 
-  const response = await openai.chat.completions.create({
+  const refPrices = buildPriceReferenceContext();
+
+  const response = await withRetry(() => openai.chat.completions.create({
     model: 'gpt-4o',
     response_format: { type: 'json_object' },
     messages: [
@@ -268,14 +351,17 @@ IMPORTANT:
         role: 'user',
         content: `${storeDirective}
 
-- Calculate totals by multiplying each item's unit price by its quantity. For example, "16 cream cheese" at ~$2/each = $32, NOT $2.
-- Prices entered by users are TOTAL price (not per-unit), so keep item-level prices as the total paid.
-- Sort by estimated total (cheapest first).
+PRICING RULES:
+- Calculate totals by multiplying each item's unit price by its quantity.
+- Use crowd-sourced prices first (most accurate). Then use the reference prices below. Then estimate for the store's tier.
+- Budget stores are ~22% below reference average; premium stores are ~35% above; club stores ~15% below (bulk sizes).
+- Sort results by estimated total (cheapest first).
 
 Shopping list:
 ${itemList}
 
-${priceContext ? `Known crowd-sourced prices (use these where available, estimate the rest):\n${priceContext}` : 'No crowd-sourced price data available. Estimate all prices.'}
+${priceContext ? `Crowd-sourced prices (highest priority — use these exactly):\n${priceContext}\n` : ''}
+${refPrices}
 
 Return JSON:
 {
@@ -293,7 +379,7 @@ Return JSON:
           "unitPrice": number,
           "quantity": number,
           "subtotal": number,
-          "confidence": "crowd_sourced" | "ai_estimate"
+          "confidence": "crowd_sourced" | "reference_data" | "ai_estimate"
         }
       ]
     }
@@ -301,9 +387,9 @@ Return JSON:
 }`,
       },
     ],
-    temperature: 0.4,
+    temperature: 0.3,
     max_tokens: 4000,
-  });
+  }));
 
   const content = response.choices[0]?.message?.content;
   if (!content) throw new Error('No response from AI');
@@ -311,45 +397,68 @@ Return JSON:
   return parsed.stores || [];
 }
 
+/**
+ * Validate whether an item name is a grocery/food item.
+ * Checks local reference data first — only calls AI for ambiguous items.
+ */
 export async function validateGroceryItem(
   itemName: string
 ): Promise<{ isValid: boolean; reason: string; suggestedCategory?: string }> {
-  const response = await openai.chat.completions.create({
-    model: 'gpt-4o',
+  // Local check first (free, instant)
+  const category = categorizeItem(itemName);
+  if (category) {
+    return { isValid: true, reason: 'Recognized grocery item', suggestedCategory: category };
+  }
+  if (isGroceryItem(itemName)) {
+    return { isValid: true, reason: 'Recognized grocery item' };
+  }
+
+  // Fall back to AI for truly ambiguous items
+  const response = await withRetry(() => openai.chat.completions.create({
+    model: 'gpt-4o-mini',
     response_format: { type: 'json_object' },
     messages: [
-      { role: 'system', content: 'You validate whether items are grocery/food items. Respond in JSON.' },
+      { role: 'system', content: 'You validate whether items are grocery/food items. Respond in JSON only.' },
       {
         role: 'user',
-        content: `Is "${itemName}" a valid grocery or food item? Return: { "isValid": boolean, "reason": "string", "suggestedCategory": "string or null" }`,
+        content: `Is "${itemName}" a valid grocery or food item that someone would buy at a grocery store? Return: { "isValid": boolean, "reason": "string (one sentence)", "suggestedCategory": "string or null" }`,
       },
     ],
     temperature: 0.1,
-    max_tokens: 200,
-  });
+    max_tokens: 100,
+  }));
 
   const content = response.choices[0]?.message?.content;
   if (!content) return { isValid: false, reason: 'Could not validate item' };
   return JSON.parse(content);
 }
 
+/**
+ * Predict where an item would be found in a store.
+ * Uses local reference data first — only calls AI when the item is not recognized.
+ */
 export async function predictAisleLocation(
   itemName: string,
   storeName: string
 ): Promise<string> {
-  const response = await openai.chat.completions.create({
-    model: 'gpt-4o',
+  // Local check first (free)
+  const local = predictAisleLocally(itemName, storeName);
+  if (local) return local;
+
+  // AI fallback for specialty items
+  const response = await withRetry(() => openai.chat.completions.create({
+    model: 'gpt-4o-mini',
     response_format: { type: 'json_object' },
     messages: [
-      { role: 'system', content: 'You predict likely aisle locations in grocery stores. Respond in JSON.' },
+      { role: 'system', content: 'You predict likely aisle locations in US grocery stores. Be specific. Respond in JSON only.' },
       {
         role: 'user',
-        content: `Where would "${itemName}" most likely be found in ${storeName}? Return: { "aisle": "string (e.g., 'Aisle 3 - Canned Goods', 'Produce Section', 'Dairy Aisle')" }`,
+        content: `Where would "${itemName}" most likely be found in a ${storeName} store? Return: { "aisle": "string (e.g., 'Aisle 7 - International Foods', 'Produce Section', 'Back Wall - Dairy')" }`,
       },
     ],
-    temperature: 0.3,
-    max_tokens: 100,
-  });
+    temperature: 0.2,
+    max_tokens: 80,
+  }));
 
   const content = response.choices[0]?.message?.content;
   if (!content) return 'Unknown';
@@ -362,7 +471,7 @@ export async function findAlternativeStores(
   currentStore: string,
   zipCode: string
 ): Promise<any[]> {
-  const response = await openai.chat.completions.create({
+  const response = await withRetry(() => openai.chat.completions.create({
     model: 'gpt-4o',
     response_format: { type: 'json_object' },
     messages: [
@@ -391,7 +500,7 @@ Return JSON:
     ],
     temperature: 0.5,
     max_tokens: 2000,
-  });
+  }));
 
   const content = response.choices[0]?.message?.content;
   if (!content) throw new Error('No response from AI');
@@ -419,7 +528,7 @@ export async function extractReceiptData(
   imageBase64: string,
   mimeType: string
 ): Promise<ReceiptOcrResult> {
-  const response = await openai.chat.completions.create({
+  const response = await withRetry(() => openai.chat.completions.create({
     model: 'gpt-4o',
     response_format: { type: 'json_object' },
     messages: [
@@ -462,7 +571,7 @@ Rules:
     ],
     temperature: 0.1,
     max_tokens: 4000,
-  });
+  }));
 
   const content = response.choices[0]?.message?.content;
   if (!content) throw new Error('Could not read receipt');

@@ -2,7 +2,7 @@ import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { Users, ShoppingCart, CalendarDays, ArrowRight, Plus, Sparkles, TrendingDown } from 'lucide-react';
-import { PieChart, Pie, Cell, ResponsiveContainer } from 'recharts';
+import { PieChart, Pie, Cell, ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip } from 'recharts';
 import { useAuth } from '@/contexts/AuthContext';
 import { api } from '@/lib/api';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -67,6 +67,30 @@ export default function DashboardPage() {
     { name: 'Spent', value: monthlySpent },
     { name: 'Remaining', value: budgetRemaining },
   ];
+
+  // 8-week spending trend
+  const weeklyTrend = (() => {
+    if (!shoppingHistory?.length) return [];
+    const weeks: { label: string; amount: number }[] = [];
+    const now = new Date();
+    for (let w = 7; w >= 0; w--) {
+      const start = new Date(now);
+      start.setDate(now.getDate() - w * 7 - 6);
+      start.setHours(0, 0, 0, 0);
+      const end = new Date(now);
+      end.setDate(now.getDate() - w * 7);
+      end.setHours(23, 59, 59, 999);
+      const label = start.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+      const amount = shoppingHistory
+        .filter((h: any) => {
+          const d = new Date(h.shoppingDate);
+          return d >= start && d <= end;
+        })
+        .reduce((sum: number, h: any) => sum + (h.actualCost || 0), 0);
+      weeks.push({ label, amount: Math.round(amount * 100) / 100 });
+    }
+    return weeks;
+  })();
 
   return (
     <motion.div variants={stagger} initial="hidden" animate="show" className="space-y-6">
@@ -285,6 +309,34 @@ export default function DashboardPage() {
                     <span>Spent: {formatCurrency(monthlySpent)}</span>
                     <span>Budget: {formatCurrency(budget)}</span>
                   </div>
+                </CardContent>
+              </Card>
+            </motion.div>
+          )}
+
+          {/* Weekly spending trend */}
+          {weeklyTrend.some((w) => w.amount > 0) && (
+            <motion.div variants={fadeUp}>
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-sm flex items-center gap-2">
+                    <TrendingDown className="h-4 w-4 text-primary" />
+                    8-Week Spending Trend
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="pt-0">
+                  <ResponsiveContainer width="100%" height={140}>
+                    <BarChart data={weeklyTrend} margin={{ top: 4, right: 4, bottom: 0, left: -20 }}>
+                      <XAxis dataKey="label" tick={{ fontSize: 9 }} tickLine={false} axisLine={false} interval={1} />
+                      <YAxis tick={{ fontSize: 9 }} tickLine={false} axisLine={false} tickFormatter={(v) => `$${v}`} />
+                      <Tooltip
+                        formatter={(v: number) => [`$${v.toFixed(2)}`, 'Spent']}
+                        labelStyle={{ fontSize: 11 }}
+                        contentStyle={{ fontSize: 11, borderRadius: 8, border: '1px solid #e2e8f0' }}
+                      />
+                      <Bar dataKey="amount" fill="#3B82F6" radius={[4, 4, 0, 0]} />
+                    </BarChart>
+                  </ResponsiveContainer>
                 </CardContent>
               </Card>
             </motion.div>

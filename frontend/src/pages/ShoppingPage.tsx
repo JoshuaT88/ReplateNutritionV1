@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -29,7 +29,13 @@ export default function ShoppingPage() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { toast } = useToast();
+  const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   const [showAddItem, setShowAddItem] = useState(false);
+
+  useEffect(() => {
+    const id = localStorage.getItem('active_session_id');
+    if (id) setActiveSessionId(id);
+  }, []);
   const [showGenerateFromMeals, setShowGenerateFromMeals] = useState(false);
   const [showStoreFinder, setShowStoreFinder] = useState(false);
   const [showBudgetWarning, setShowBudgetWarning] = useState(false);
@@ -128,6 +134,7 @@ export default function ShoppingPage() {
   const startSessionMutation = useMutation({
     mutationFn: (storeName?: string) => api.startShoppingSession(storeName),
     onSuccess: (session) => {
+      localStorage.setItem('active_session_id', session.id);
       navigate(`/shopping/session/${session.id}`);
     },
     onError: (err: Error) => toast('error', 'Failed to start session', err.message),
@@ -200,6 +207,34 @@ export default function ShoppingPage() {
           </Button>
         </div>
       </div>
+
+      {/* Active Session Resume Banner */}
+      {activeSessionId && (
+        <div className="flex items-center justify-between px-4 py-3 rounded-xl bg-primary/10 border border-primary/20">
+          <div className="flex items-center gap-2">
+            <ShoppingCart className="h-4 w-4 text-primary" />
+            <p className="text-sm font-medium text-primary">You have an active shopping session</p>
+          </div>
+          <div className="flex gap-2">
+            <Button
+              size="sm"
+              onClick={() => navigate(`/shopping/session/${activeSessionId}`)}
+            >
+              Resume
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => {
+                localStorage.removeItem('active_session_id');
+                setActiveSessionId(null);
+              }}
+            >
+              Dismiss
+            </Button>
+          </div>
+        </div>
+      )}
 
       {/* Budget Widget */}
       {monthlyBudget > 0 && (

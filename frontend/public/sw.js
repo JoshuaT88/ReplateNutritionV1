@@ -54,3 +54,32 @@ self.addEventListener('fetch', (event) => {
     })
   );
 });
+
+// === Push Notifications ===
+self.addEventListener('push', (event) => {
+  let data = {};
+  try { data = event.data?.json() ?? {}; } catch { data = { title: 'Replate Nutrition', body: event.data?.text() }; }
+
+  event.waitUntil(
+    self.registration.showNotification(data.title || 'Replate Nutrition', {
+      body: data.body || '',
+      icon: data.icon || '/icon-192.png',
+      badge: data.badge || '/icon-72.png',
+      tag: data.tag || 'replate',
+      data: { url: data.url || '/' },
+      requireInteraction: data.requireInteraction || false,
+    })
+  );
+});
+
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close();
+  const url = event.notification.data?.url || '/';
+  event.waitUntil(
+    self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((windowClients) => {
+      const existing = windowClients.find((c) => c.url === url && 'focus' in c);
+      if (existing) return existing.focus();
+      return self.clients.openWindow(url);
+    })
+  );
+});

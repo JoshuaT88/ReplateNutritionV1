@@ -237,9 +237,29 @@ export default function MealPlanPage() {
           'gap-3',
           view === 'day' ? 'grid grid-cols-1' :
           view === 'month' ? 'grid grid-cols-7' :
+          view === 'week' ? '' :   // week uses its own layout below
           'grid grid-cols-1'
         )}>
-          {dates.map((date) => {
+          {view === 'week' ? (
+            <div className="overflow-x-auto -mx-1 px-1 pb-2">
+              <div className="grid grid-cols-7 gap-2 min-w-[560px]">
+                {dates.map((date) => {
+                  const meals = getMealsForDate(date);
+                  const isToday = isSameDay(date, today);
+                  return (
+                    <WeekColumn
+                      key={date.toISOString()}
+                      date={date}
+                      meals={meals}
+                      isToday={isToday}
+                      onToggle={(id, completed) => toggleMutation.mutate({ id, completed })}
+                      onDelete={(id) => deleteMutation.mutate(id)}
+                    />
+                  );
+                })}
+              </div>
+            </div>
+          ) : dates.map((date) => {
             const meals = getMealsForDate(date);
             const isToday = isSameDay(date, today);
 
@@ -380,6 +400,82 @@ export default function MealPlanPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+    </div>
+  );
+}
+
+function WeekColumn({ date, meals, isToday, onToggle, onDelete }: {
+  date: Date; meals: MealPlan[]; isToday: boolean;
+  onToggle: (id: string, completed: boolean) => void;
+  onDelete: (id: string) => void;
+}) {
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+  const dayName = date.toLocaleDateString('en-US', { weekday: 'short' });
+  const dayNum = date.getDate();
+
+  return (
+    <div className={cn(
+      'flex flex-col rounded-2xl border bg-white min-w-0',
+      isToday ? 'border-primary/40 ring-1 ring-primary/20' : 'border-card-border'
+    )}>
+      {/* Day header */}
+      <div className={cn(
+        'px-2 py-2 text-center rounded-t-2xl',
+        isToday ? 'bg-primary text-white' : 'bg-slate-50'
+      )}>
+        <p className="text-[10px] font-semibold uppercase tracking-wide opacity-80">{dayName}</p>
+        <p className={cn('text-lg font-bold leading-none mt-0.5', isToday ? 'text-white' : 'text-foreground')}>{dayNum}</p>
+      </div>
+
+      {/* Meal chips */}
+      <div className="flex flex-col gap-1 p-1.5 flex-1">
+        {meals.length === 0 ? (
+          <div className="flex items-center justify-center flex-1 py-4">
+            <UtensilsCrossed className="h-4 w-4 text-slate-200" />
+          </div>
+        ) : meals.map((meal) => (
+          <div key={meal.id}>
+            <button
+              onClick={() => setExpandedId(expandedId === meal.id ? null : meal.id)}
+              className={cn(
+                'w-full text-left px-1.5 py-1 rounded-lg text-[10px] font-medium border transition-all truncate',
+                MEAL_COLORS[meal.mealType] || 'bg-slate-50 border-slate-200 text-slate-700',
+                meal.completed && 'opacity-50 line-through'
+              )}
+              title={meal.mealName}
+            >
+              {meal.mealName}
+            </button>
+            {expandedId === meal.id && (
+              <div className="mt-1 px-1.5 pb-1 space-y-0.5">
+                {meal.calories && <p className="text-[9px] text-muted">{meal.calories} cal</p>}
+                <div className="flex gap-1 mt-1">
+                  <button
+                    onClick={() => onToggle(meal.id, !meal.completed)}
+                    className="flex-1 flex items-center justify-center gap-0.5 py-0.5 rounded bg-emerald-50 text-emerald-700 text-[9px] font-medium hover:bg-emerald-100 transition-colors"
+                  >
+                    <Check className="h-2.5 w-2.5" />
+                    {meal.completed ? 'Undo' : 'Done'}
+                  </button>
+                  <button
+                    onClick={() => onDelete(meal.id)}
+                    className="p-0.5 rounded bg-red-50 text-red-500 hover:bg-red-100 transition-colors"
+                  >
+                    <Trash2 className="h-2.5 w-2.5" />
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+
+      {/* Meal count badge */}
+      {meals.length > 0 && (
+        <div className="px-2 pb-1.5 text-center">
+          <span className="text-[9px] text-muted">{meals.filter(m => m.completed).length}/{meals.length}</span>
+        </div>
+      )}
     </div>
   );
 }

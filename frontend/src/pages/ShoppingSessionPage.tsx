@@ -5,7 +5,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import {
   Check, X, AlertTriangle, ArrowLeft, DollarSign,
   MapPin, Loader2, ShoppingCart, Timer, RefreshCw,
-  List, LayoutGrid, Layers, ChevronDown, Package
+  List, LayoutGrid, Layers, ChevronDown, Package, Plus
 } from 'lucide-react';
 import { api } from '@/lib/api';
 import { Button } from '@/components/ui/button';
@@ -14,6 +14,8 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { useToast } from '@/components/ui/toast';
+import { ReportIssueButton } from '@/components/shared/ReportIssueModal';
+import { fmtDuration } from '@/lib/time';
 import { cn, formatCurrency } from '@/lib/utils';
 
 type ItemStatus = 'PENDING' | 'PICKED_UP' | 'OUT_OF_STOCK' | 'SKIPPED' | 'TOO_EXPENSIVE';
@@ -46,6 +48,9 @@ export default function ShoppingSessionPage() {
   const [markAisle, setMarkAisle] = useState('');
   const [showEndConfirm, setShowEndConfirm] = useState(false);
   const [showReview, setShowReview] = useState(false);
+  const [showAddItem, setShowAddItem] = useState(false);
+  const [addItemName, setAddItemName] = useState('');
+  const [addItemCategory, setAddItemCategory] = useState('');
   const [reviewPrices, setReviewPrices] = useState<Record<string, string>>({});
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
 
@@ -90,9 +95,22 @@ export default function ShoppingSessionPage() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['shoppingHistory'] });
       queryClient.invalidateQueries({ queryKey: ['shoppingList'] });
+      localStorage.removeItem('active_session_id');
       toast('success', 'Shopping session completed!');
       navigate('/shopping/history');
     },
+  });
+
+  const addItemMutation = useMutation({
+    mutationFn: () => api.addItemToSession(sessionId!, { itemName: addItemName, category: addItemCategory || undefined }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['shoppingSession', sessionId] });
+      setShowAddItem(false);
+      setAddItemName('');
+      setAddItemCategory('');
+      toast('success', 'Item added');
+    },
+    onError: (err: Error) => toast('error', 'Failed to add item', err.message),
   });
 
   const items = session?.items || [];
@@ -102,12 +120,6 @@ export default function ShoppingSessionPage() {
 
   const runningTotal = pickedUp.reduce((sum: number, i: any) => sum + (i.actualPrice || i.estimatedPrice || 0), 0);
   const progress = items.length > 0 ? ((items.length - pending.length) / items.length) * 100 : 0;
-
-  const formatTime = (seconds: number) => {
-    const m = Math.floor(seconds / 60);
-    const s = seconds % 60;
-    return `${m}:${s.toString().padStart(2, '0')}`;
-  };
 
   // Group pending items by aisle
   const aisleGrouped = pending.reduce<Record<string, any[]>>((acc, item: any) => {
@@ -153,22 +165,34 @@ export default function ShoppingSessionPage() {
   }
 
   return (
-    <div className="max-w-2xl mx-auto space-y-4 pb-32">
+    <div className="max-w-2xl mx-auto space-y-4 pb-[calc(6rem+env(safe-area-inset-bottom,0px))] lg:pb-8">
       {/* Session Header */}
       <div className="sticky top-0 z-20 bg-background pt-2 pb-4 space-y-3">
         <div className="flex items-center justify-between">
-          <button onClick={() => setShowEndConfirm(true)} className="flex items-center gap-1.5 text-sm text-muted">
-            <ArrowLeft className="h-4 w-4" /> End Session
+          <button onClick={() => navigate('/shopping')} className="flex items-center gap-1.5 text-sm text-muted hover:text-foreground transition-colors">
+            <ArrowLeft className="h-4 w-4" /> Back to List
           </button>
           <div className="flex items-center gap-3 text-sm">
             <span className="flex items-center gap-1 text-muted">
-              <Timer className="h-3.5 w-3.5" /> {formatTime(elapsedSeconds)}
+              <Timer className="h-3.5 w-3.5" /> {fmtDuration(elapsedSeconds)}
             </span>
             {session?.storeName && (
               <span className="flex items-center gap-1 text-muted">
                 <MapPin className="h-3.5 w-3.5" /> {session.storeName}
               </span>
             )}
+            <button
+              onClick={() => setShowAddItem(true)}
+              className="flex items-center gap-1 px-2.5 py-1 bg-primary text-white rounded-lg text-xs font-medium hover:bg-primary/90 transition-colors"
+            >
+              <Plus className="h-3.5 w-3.5" /> Add
+            </button>
+            <button
+              onClick={() => setShowEndConfirm(true)}
+              className="flex items-center gap-1 px-2.5 py-1 bg-red-50 text-red-600 rounded-lg text-xs font-medium hover:bg-red-100 transition-colors"
+            >
+              End Session
+            </button>
           </div>
         </div>
 
@@ -599,7 +623,7 @@ export default function ShoppingSessionPage() {
               <div>
                 <label className="text-xs font-medium text-muted block mb-1.5">Price paid (total)</label>
                 <div className="relative">
-                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-muted">$</span>
+                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-muted pointer-events-none select-none">$</span>
                   <Input
                     type="number"
                     step="0.01"
@@ -607,7 +631,7 @@ export default function ShoppingSessionPage() {
                     placeholder="0.00"
                     value={markPrice}
                     onChange={(e) => setMarkPrice(e.target.value)}
-                    className="pl-7 text-lg font-mono"
+                    className="pl-8 text-lg font-mono"
                     autoFocus
                   />
                 </div>
@@ -630,6 +654,44 @@ export default function ShoppingSessionPage() {
             <Button onClick={handleMarkSubmit}
               disabled={submitPriceMutation.isPending || submitAisleMutation.isPending}>
               Save
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Add Item Dialog */}
+      <Dialog open={showAddItem} onOpenChange={setShowAddItem}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Add Item to Session</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3 my-4">
+            <div>
+              <label className="text-xs font-medium text-muted block mb-1">Item name *</label>
+              <Input
+                placeholder="e.g., Greek yogurt"
+                value={addItemName}
+                onChange={(e) => setAddItemName(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && addItemName.trim() && addItemMutation.mutate()}
+                autoFocus
+              />
+            </div>
+            <div>
+              <label className="text-xs font-medium text-muted block mb-1">Category (optional)</label>
+              <Input
+                placeholder="e.g., Dairy"
+                value={addItemCategory}
+                onChange={(e) => setAddItemCategory(e.target.value)}
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowAddItem(false)}>Cancel</Button>
+            <Button
+              onClick={() => addItemMutation.mutate()}
+              disabled={!addItemName.trim() || addItemMutation.isPending}
+            >
+              {addItemMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Add Item'}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -679,6 +741,12 @@ export default function ShoppingSessionPage() {
           </Button>
         </div>
       )}
+
+      {/* Floating "Report Issue" button — always available during a live shopping session */}
+      <ReportIssueButton
+        workflow="shopping-session"
+        metadata={{ sessionId, storeName: session?.storeName, itemsTotal: items.length, itemsPending: pending.length }}
+      />
     </div>
   );
 }

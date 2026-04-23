@@ -21,9 +21,20 @@ export const env = {
 
   FRONTEND_URL: process.env.FRONTEND_URL || 'http://localhost:5173',
 
+  DEV_EMAIL: process.env.DEV_EMAIL || '',
+
   STORAGE_TYPE: process.env.STORAGE_TYPE || 'local',
   S3_BUCKET: process.env.S3_BUCKET,
   S3_REGION: process.env.S3_REGION,
   S3_ACCESS_KEY: process.env.S3_ACCESS_KEY,
   S3_SECRET_KEY: process.env.S3_SECRET_KEY,
+
+  RESEND_WEBHOOK_SECRET: process.env.RESEND_WEBHOOK_SECRET || '',
+
+  KROGER_CLIENT_ID: process.env.KROGER_CLIENT_ID || '',
+  KROGER_CLIENT_SECRET: process.env.KROGER_CLIENT_SECRET || '',
+
+  VAPID_PUBLIC_KEY: process.env.VAPID_PUBLIC_KEY || '',
+  VAPID_PRIVATE_KEY: process.env.VAPID_PRIVATE_KEY || '',
+  VAPID_SUBJECT: process.env.VAPID_SUBJECT || 'mailto:admin@replatenutrition.com',
 } as const;

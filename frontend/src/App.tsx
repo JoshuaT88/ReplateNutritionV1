@@ -22,7 +22,10 @@ const ShoppingSessionPage = lazy(() => import('@/pages/ShoppingSessionPage'));
 const ShoppingHistoryPage = lazy(() => import('@/pages/ShoppingHistoryPage'));
 const SettingsPage = lazy(() => import('@/pages/SettingsPage'));
 const HelpPage = lazy(() => import('@/pages/HelpPage'));
+const SupportPage = lazy(() => import('@/pages/SupportPage'));
 const NotFoundPage = lazy(() => import('@/pages/NotFoundPage'));
+const SharePage = lazy(() => import('@/pages/SharePage'));
+const MacroLogPage = lazy(() => import('@/pages/MacroLogPage'));
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -81,6 +84,9 @@ export default function App() {
                 <Route path="/reset-password" element={<ResetPasswordPage />} />
               </Route>
 
+              {/* Fully public — no auth wrapper */}
+              <Route path="/share/:token" element={<Suspense fallback={<PageSpinner />}><SharePage /></Suspense>} />
+
               {/* Protected routes */}
               <Route element={<ProtectedRoute />}>
                 <Route path="/" element={<DashboardPage />} />
@@ -94,7 +100,9 @@ export default function App() {
                 <Route path="/shopping/session/:sessionId" element={<ShoppingSessionPage />} />
                 <Route path="/shopping/history" element={<ShoppingHistoryPage />} />
                 <Route path="/settings" element={<SettingsPage />} />
+                <Route path="/macros" element={<MacroLogPage />} />
                 <Route path="/help" element={<HelpPage />} />
+                <Route path="/support" element={<SupportPage />} />
               </Route>
 
               {/* 404 */}

@@ -23,6 +23,7 @@ export interface UserPreferences {
   budget: number | null;
   currency: string;
   theme: 'light' | 'dark' | 'auto';
+  timezone: string;
   firstVisitCompleted: boolean;
   profilePictureUrl: string | null;
   householdType: string | null;

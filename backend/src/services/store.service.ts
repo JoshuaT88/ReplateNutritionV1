@@ -26,14 +26,13 @@ export async function searchNearbyStores(zipCode: string, radius: number = 16000
 
   if (!placesData.results?.length) return [];
 
-  const stores: PlaceResult[] = [];
-  for (const place of placesData.results.slice(0, 10)) {
-    // Get details for phone and hours
+  // Fetch details for all stores in parallel instead of sequential awaits
+  const detailPromises = placesData.results.slice(0, 10).map(async (place: any) => {
     const detailUrl = `https://maps.googleapis.com/maps/api/place/details/json?place_id=${place.place_id}&fields=formatted_phone_number,opening_hours&key=${env.GOOGLE_PLACES_API_KEY}`;
     const detailRes = await fetch(detailUrl);
     const detailData = await detailRes.json() as any;
 
-    stores.push({
+    return {
       name: place.name,
       address: place.vicinity || place.formatted_address || '',
       phone: detailData.result?.formatted_phone_number,
@@ -41,9 +40,10 @@ export async function searchNearbyStores(zipCode: string, radius: number = 16000
       hours: detailData.result?.opening_hours?.weekday_text,
       location: place.geometry.location,
       placeId: place.place_id,
-    });
-  }
+    } as PlaceResult;
+  });
 
+  const stores = await Promise.all(detailPromises);
   return stores;
 }
 

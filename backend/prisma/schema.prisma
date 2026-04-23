@@ -39,15 +39,19 @@ model User {
   createdAt     DateTime @default(now()) @map("created_at")
   updatedAt     DateTime @updatedAt @map("updated_at")
 
-  preferences       UserPreferences?
-  profiles          Profile[]
-  recommendations   Recommendation[]
-  mealPlans         MealPlan[]
-  shoppingLists     ShoppingList[]
-  shoppingHistories ShoppingHistory[]
-  shoppingSessions  ShoppingSession[]
-  priceSubmissions  PriceSubmission[]
-  refreshTokens     RefreshToken[]
+  preferences        UserPreferences?
+  profiles           Profile[]
+  recommendations    Recommendation[]
+  mealPlans          MealPlan[]
+  shoppingLists      ShoppingList[]
+  shoppingHistories  ShoppingHistory[]
+  shoppingSessions   ShoppingSession[]
+  priceSubmissions   PriceSubmission[]
+  refreshTokens      RefreshToken[]
+  passwordResetTokens PasswordResetToken[]
+  macroLogs          MacroLog[]
+  shareTokens        ShareToken[]
+  pushSubscriptions  PushSubscription[]
 
   @@map("users")
 }
@@ -62,6 +66,19 @@ model RefreshToken {
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@map("refresh_tokens")
+}
+
+model PasswordResetToken {
+  id        String   @id @default(uuid())
+  token     String   @unique
+  userId    String   @map("user_id")
+  expiresAt DateTime @map("expires_at")
+  usedAt    DateTime? @map("used_at")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("password_reset_tokens")
 }
 
 model UserPreferences {
@@ -80,6 +97,7 @@ model UserPreferences {
   emailNotificationsEnabled Boolean @default(false) @map("email_notifications_enabled")
   emailNotificationsDisclosureAccepted Boolean @default(false) @map("email_notifications_disclosure_accepted")
   emailNotificationsDisclosureAcceptedAt DateTime? @map("email_notifications_disclosure_accepted_at")
+  timezone              String  @default("America/New_York") @map("timezone")
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
@@ -92,6 +110,7 @@ model Profile {
   name                String
   type                ProfileType
   petType             String?     @map("pet_type")
+  breed               String?
   age                 Int?
   weight              Float?
   avatarUrl           String?     @map("avatar_url")
@@ -145,6 +164,11 @@ model MealPlan {
   ingredients      String[] @default([])
   preparationNotes String?  @map("preparation_notes")
   calories         Int?
+  protein          Float?
+  carbs            Float?
+  fat              Float?
+  fiber            Float?
+  servings         Int?     @default(1)
   completed        Boolean  @default(false)
   createdAt        DateTime @default(now()) @map("created_at")
 
@@ -244,11 +268,59 @@ model AisleLocation {
   id               String   @id @default(uuid())
   itemName         String   @map("item_name")
   storeName        String   @map("store_name")
+  zipRegion        String   @default("") @map("zip_region")
   aisleLocation    String   @map("aisle_location")
   verifiedCount    Int      @default(1) @map("verified_count")
   lastVerifiedDate DateTime @default(now()) @map("last_verified_date")
   createdBy        String?  @map("created_by")
 
-  @@unique([itemName, storeName])
+  @@unique([itemName, storeName, zipRegion])
+  @@index([storeName, zipRegion])
   @@map("aisle_locations")
+}
+
+model MacroLog {
+  id         String   @id @default(uuid())
+  userId     String   @map("user_id")
+  date       DateTime @db.Date
+  mealName   String   @map("meal_name")
+  calories   Int?
+  protein    Float?
+  carbs      Float?
+  fat        Float?
+  fiber      Float?
+  notes      String?
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, date])
+  @@map("macro_logs")
+}
+
+model ShareToken {
+  id        String   @id @default(uuid())
+  token     String   @unique @default(cuid())
+  userId    String   @map("user_id")
+  snapshot  Json
+  expiresAt DateTime @map("expires_at")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("share_tokens")
+}
+
+model PushSubscription {
+  id        String   @id @default(uuid())
+  userId    String   @map("user_id")
+  endpoint  String   @unique
+  p256dh    String
+  auth      String
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("push_subscriptions")
 }

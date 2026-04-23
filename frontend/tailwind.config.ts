@@ -19,6 +19,9 @@ export default {
           success: '#10B981',
           warning: '#F97316',
           danger: '#EF4444',
+          green: '#16A34A',
+          'green-light': '#DCFCE7',
+          'green-mid': '#4ADE80',
         },
         muted: {
           DEFAULT: '#64748B',

@@ -2,9 +2,11 @@ import { NavLink } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import {
   LayoutDashboard, Users, Sparkles, CalendarDays, ShoppingCart, History,
-  Settings, HelpCircle, ChevronLeft, ChevronRight, LogOut, Utensils,
+  Settings, HelpCircle, ChevronLeft, ChevronRight, LogOut, Utensils, HeadsetIcon, Activity,
 } from 'lucide-react';
+import { useQuery } from '@tanstack/react-query';
 import { useAuth } from '@/contexts/AuthContext';
+import { api } from '@/lib/api';
 import { cn, getInitials, getAvatarGradient } from '@/lib/utils';
 
 interface SidebarProps {
@@ -17,18 +19,27 @@ const navItems = [
   { to: '/profiles', icon: Users, label: 'Profiles' },
   { to: '/recommendations', icon: Sparkles, label: 'Recommendations' },
   { to: '/meal-plan', icon: CalendarDays, label: 'Meal Plan' },
-  { to: '/shopping', icon: ShoppingCart, label: 'Smart Shopping' },
+  { to: '/macros', icon: Activity, label: 'Nutrition Log' },
+  { to: '/shopping', icon: ShoppingCart, label: 'Smart Shopping', badge: true },
   { to: '/shopping/history', icon: History, label: 'Shopping History' },
 ];
 
 const systemItems = [
   { to: '/settings', icon: Settings, label: 'Settings' },
   { to: '/help', icon: HelpCircle, label: 'About / Help' },
+  { to: '/support', icon: HeadsetIcon, label: 'Support' },
 ];
 
 export function Sidebar({ collapsed, onToggle }: SidebarProps) {
   const { user, logout } = useAuth();
   const gradient = user ? getAvatarGradient(user.fullName) : '';
+
+  const { data: shoppingList } = useQuery({
+    queryKey: ['shoppingList'],
+    queryFn: () => api.getShoppingList(),
+    staleTime: 60_000,
+  });
+  const pendingCount = shoppingList?.filter((i: any) => !i.checked).length ?? 0;
 
   return (
     <div className="flex flex-col h-full bg-gradient-to-b from-sidebar-bg to-sidebar-bg-end relative">
@@ -81,6 +92,11 @@ export function Sidebar({ collapsed, onToggle }: SidebarProps) {
                 )}
                 <item.icon className={cn('shrink-0', collapsed ? 'h-5 w-5' : 'h-5 w-5')} />
                 {!collapsed && <span>{item.label}</span>}
+                {!collapsed && (item as any).badge && pendingCount > 0 && (
+                  <span className="ml-auto flex items-center justify-center min-w-[20px] h-5 px-1 rounded-full bg-primary/20 text-primary text-[10px] font-bold">
+                    {pendingCount > 99 ? '99+' : pendingCount}
+                  </span>
+                )}
               </>
             )}
           </NavLink>
