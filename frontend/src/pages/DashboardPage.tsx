@@ -1,7 +1,7 @@
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useMutation } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { motion } from 'framer-motion';
-import { Users, ShoppingCart, CalendarDays, ArrowRight, Plus, Sparkles, TrendingDown } from 'lucide-react';
+import { Users, ShoppingCart, CalendarDays, ArrowRight, Plus, Sparkles, TrendingDown, RefreshCw } from 'lucide-react';
 import { PieChart, Pie, Cell, ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip } from 'recharts';
 import { useAuth } from '@/contexts/AuthContext';
 import { api } from '@/lib/api';
@@ -51,6 +51,17 @@ export default function DashboardPage() {
   const { data: shoppingHistory } = useQuery({
     queryKey: ['shoppingHistory'],
     queryFn: () => api.getShoppingHistory(),
+  });
+
+  const { data: reorderSuggestions = [] } = useQuery({
+    queryKey: ['reorder-suggestions'],
+    queryFn: () => api.getReorderSuggestions(),
+    staleTime: 1000 * 60 * 5,
+  });
+
+  const addToListMutation = useMutation({
+    mutationFn: (item: { itemName: string; category: string | null }) =>
+      api.addShoppingItem({ itemName: item.itemName, category: item.category || undefined }),
   });
 
   const budget = preferences?.budget || 0; // Budget is stored as monthly
@@ -147,7 +158,7 @@ export default function DashboardPage() {
 
       {/* Main grid */}
       <div className="grid lg:grid-cols-3 gap-6">
-        {/* Left column (2/3) */}
+        {/* Left column (2/3) — on mobile this is the primary flow */}
         <div className="lg:col-span-2 space-y-6">
           {/* Today's meals */}
           <motion.div variants={fadeUp}>
@@ -337,6 +348,38 @@ export default function DashboardPage() {
                       <Bar dataKey="amount" fill="#3B82F6" radius={[4, 4, 0, 0]} />
                     </BarChart>
                   </ResponsiveContainer>
+                </CardContent>
+              </Card>
+            </motion.div>
+          )}
+
+          {/* Reorder suggestions */}
+          {reorderSuggestions.length > 0 && (
+            <motion.div variants={fadeUp}>
+              <Card>
+                <CardHeader className="flex-row items-center justify-between pb-2">
+                  <CardTitle className="text-sm flex items-center gap-2">
+                    <RefreshCw className="h-4 w-4 text-primary" />
+                    Time to Reorder
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-2">
+                  {reorderSuggestions.slice(0, 5).map((s: any) => (
+                    <div key={s.itemName} className="flex items-center justify-between gap-2">
+                      <div className="min-w-0">
+                        <p className="text-sm font-medium text-text-primary truncate">{s.itemName}</p>
+                        <p className="text-xs text-text-muted">{s.daysSinceLastPurchase}d ago · {s.purchaseCount}× purchased</p>
+                      </div>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="shrink-0"
+                        onClick={() => addToListMutation.mutate(s)}
+                      >
+                        <Plus className="h-3 w-3" />
+                      </Button>
+                    </div>
+                  ))}
                 </CardContent>
               </Card>
             </motion.div>

@@ -36,6 +36,7 @@ model User {
   fullName      String   @map("full_name")
   passwordHash  String   @map("password_hash")
   role          UserRole @default(MEMBER)
+  householdId   String?  @map("household_id")
   createdAt     DateTime @default(now()) @map("created_at")
   updatedAt     DateTime @updatedAt @map("updated_at")
 
@@ -49,9 +50,19 @@ model User {
   priceSubmissions   PriceSubmission[]
   refreshTokens      RefreshToken[]
   passwordResetTokens PasswordResetToken[]
+  emailVerificationCodes EmailVerificationCode[]
   macroLogs          MacroLog[]
   shareTokens        ShareToken[]
   pushSubscriptions  PushSubscription[]
+  pantryItems        PantryItem[]
+  shoppingListGroups ShoppingListGroup[]
+  customMeals        CustomMeal[]
+  activityLogs          ActivityLog[]
+  ownedHousehold        Household?      @relation("HouseholdOwner")
+  householdMembership   HouseholdMember?
+  dataExportUrl         String?   @map("data_export_url")
+  dataExportExpiresAt   DateTime? @map("data_export_expires_at")
+  dataExportRequestedAt DateTime? @map("data_export_requested_at")
 
   @@map("users")
 }
@@ -81,6 +92,20 @@ model PasswordResetToken {
   @@map("password_reset_tokens")
 }
 
+model EmailVerificationCode {
+  id        String   @id @default(uuid())
+  userId    String   @map("user_id")
+  code      String
+  purpose   String   @default("notifications")
+  expiresAt DateTime @map("expires_at")
+  usedAt    DateTime? @map("used_at")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("email_verification_codes")
+}
+
 model UserPreferences {
   id                    String  @id @default(uuid())
   userId                String  @unique @map("user_id")
@@ -98,6 +123,14 @@ model UserPreferences {
   emailNotificationsDisclosureAccepted Boolean @default(false) @map("email_notifications_disclosure_accepted")
   emailNotificationsDisclosureAcceptedAt DateTime? @map("email_notifications_disclosure_accepted_at")
   timezone              String  @default("America/New_York") @map("timezone")
+  budgetLastResetAt     DateTime? @map("budget_last_reset_at")
+  gpsAppPreference      String? @map("gps_app_preference")
+  preferredStoreIds     Json?   @map("preferred_store_ids")
+  pinnedNavItems        Json?   @map("pinned_nav_items")
+  shoppingFrequency     String? @map("shopping_frequency")
+  shoppingDay           String? @map("shopping_day")
+  perTripBudgetAllocation Float? @map("per_trip_budget_allocation")
+  organizerRole         String? @map("organizer_role")
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
@@ -111,6 +144,8 @@ model Profile {
   type                ProfileType
   petType             String?     @map("pet_type")
   breed               String?
+  dietType            String?     @map("diet_type")
+  feedingSchedule     Json?       @map("feeding_schedule")
   age                 Int?
   weight              Float?
   avatarUrl           String?     @map("avatar_url")
@@ -120,6 +155,7 @@ model Profile {
   specialConditions   String[]    @default([]) @map("special_conditions")
   foodPreferences     String[]    @default([]) @map("food_preferences")
   foodDislikes        String[]    @default([]) @map("food_dislikes")
+  criticalAllergies   String[]    @default([]) @map("critical_allergies")
   notes               String?
   createdAt           DateTime    @default(now()) @map("created_at")
   updatedAt           DateTime    @updatedAt @map("updated_at")
@@ -127,6 +163,8 @@ model Profile {
   user            User             @relation(fields: [userId], references: [id], onDelete: Cascade)
   recommendations Recommendation[]
   mealPlans       MealPlan[]
+  macroLogs       MacroLog[]
+  activityLogs    ActivityLog[]
 
   @@map("profiles")
 }
@@ -146,6 +184,7 @@ model Recommendation {
   rating       Int?
   nutrition    Json?
   texture      String?
+  safetyFlag   String?  @map("safety_flag")
   createdAt    DateTime @default(now()) @map("created_at")
 
   user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -170,6 +209,7 @@ model MealPlan {
   fiber            Float?
   servings         Int?     @default(1)
   completed        Boolean  @default(false)
+  safetyFlag       String?  @map("safety_flag")
   createdAt        DateTime @default(now()) @map("created_at")
 
   user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -179,21 +219,41 @@ model MealPlan {
 }
 
 model ShoppingList {
-  id         String       @id @default(uuid())
-  userId     String       @map("user_id")
-  itemName   String       @map("item_name")
-  category   String?
-  quantity   String?
-  profileIds String[]     @default([]) @map("profile_ids")
-  checked    Boolean      @default(false)
-  priority   ItemPriority @default(MEDIUM)
-  notes      String?
-  sourceRef  String?      @map("source_ref")
-  createdAt  DateTime     @default(now()) @map("created_at")
+  id           String       @id @default(uuid())
+  userId       String       @map("user_id")
+  listGroupId  String?      @map("list_group_id")
+  itemName     String       @map("item_name")
+  category     String?
+  quantity     String?
+  profileIds   String[]     @default([]) @map("profile_ids")
+  checked      Boolean      @default(false)
+  priority     ItemPriority @default(MEDIUM)
+  notes        String?
+  estimatedPrice Float?     @map("estimated_price")
+  assignedStore  String?    @map("assigned_store")
+  sourceRef    String?      @map("source_ref")
+  createdAt    DateTime     @default(now()) @map("created_at")
 
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user      User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  listGroup ShoppingListGroup? @relation(fields: [listGroupId], references: [id], onDelete: SetNull)
 
   @@map("shopping_lists")
+}
+
+model ShoppingListGroup {
+  id          String   @id @default(uuid())
+  userId      String   @map("user_id")
+  name        String
+  storeName   String?  @map("store_name")
+  storeAddress String? @map("store_address")
+  isDefault   Boolean  @default(false) @map("is_default")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  user  User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  items ShoppingList[]
+
+  @@map("shopping_list_groups")
 }
 
 model ShoppingHistory {
@@ -211,6 +271,7 @@ model ShoppingHistory {
   secondaryStoreCost Float?   @map("secondary_store_cost")
   receiptUrls        String[] @default([]) @map("receipt_urls")
   notes              String?
+  durationSeconds    Int?     @map("duration_seconds")
   createdAt          DateTime @default(now()) @map("created_at")
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -271,17 +332,62 @@ model AisleLocation {
   zipRegion        String   @default("") @map("zip_region")
   aisleLocation    String   @map("aisle_location")
   verifiedCount    Int      @default(1) @map("verified_count")
+  disputeCount     Int      @default(0) @map("dispute_count")
+  confidenceScore  Float    @default(1.0) @map("confidence_score")
   lastVerifiedDate DateTime @default(now()) @map("last_verified_date")
   createdBy        String?  @map("created_by")
 
   @@unique([itemName, storeName, zipRegion])
   @@index([storeName, zipRegion])
+  @@index([confidenceScore])
   @@map("aisle_locations")
+}
+
+model PantryItem {
+  id           String    @id @default(uuid())
+  userId       String    @map("user_id")
+  itemName     String    @map("item_name")
+  category     String?
+  quantity     String?
+  unit         String?
+  expiresAt    DateTime? @map("expires_at")
+  purchasedAt  DateTime? @map("purchased_at")
+  notes        String?
+  lowStockAlert Boolean  @default(false) @map("low_stock_alert")
+  createdAt    DateTime  @default(now()) @map("created_at")
+  updatedAt    DateTime  @updatedAt @map("updated_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, category])
+  @@index([userId, expiresAt])
+  @@map("pantry_items")
+}
+
+model SavedRecipe {
+  id           String   @id @default(uuid())
+  externalId   String?  @map("external_id")
+  source       String   @default("themealdb") // themealdb | custom
+  name         String
+  category     String?
+  cuisine      String?
+  instructions String?
+  thumbnail    String?
+  ingredients  Json     // [{ name, measure }]
+  tags         String[] @default([])
+  userId       String?  @map("user_id") // null = global cache
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  @@unique([externalId, source])
+  @@index([userId])
+  @@index([category, cuisine])
+  @@map("saved_recipes")
 }
 
 model MacroLog {
   id         String   @id @default(uuid())
   userId     String   @map("user_id")
+  profileId  String?  @map("profile_id")
   date       DateTime @db.Date
   mealName   String   @map("meal_name")
   calories   Int?
@@ -292,7 +398,8 @@ model MacroLog {
   notes      String?
   createdAt  DateTime @default(now()) @map("created_at")
 
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user    User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  profile Profile? @relation(fields: [profileId], references: [id], onDelete: SetNull)
 
   @@index([userId, date])
   @@map("macro_logs")
@@ -323,4 +430,77 @@ model PushSubscription {
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@map("push_subscriptions")
+}
+
+model CustomMeal {
+  id               String   @id @default(uuid())
+  userId           String   @map("user_id")
+  name             String
+  mealType         String   @map("meal_type")
+  ingredients      String[] @default([])
+  preparationNotes String?  @map("preparation_notes")
+  calories         Int?
+  servings         Int?     @default(1)
+  prepTime         Int?     @map("prep_time")
+  tags             String[] @default([])
+  createdAt        DateTime @default(now()) @map("created_at")
+  updatedAt        DateTime @updatedAt @map("updated_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("custom_meals")
+}
+
+model ActivityLog {
+  id          String   @id @default(uuid())
+  userId      String   @map("user_id")
+  profileId   String?  @map("profile_id")
+  entityType  String   @map("entity_type") // shopping_item | meal | session | pantry | recommendation
+  entityId    String?  @map("entity_id")
+  action      String   // checked_off | completed | who_ate | started | ended | cancelled | updated | acted_on
+  performedBy String?  @map("performed_by") // profile id or 'user'
+  metadata    Json?
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  profile Profile? @relation(fields: [profileId], references: [id], onDelete: SetNull)
+
+  @@index([userId, createdAt])
+  @@index([userId, entityType])
+  @@index([profileId, createdAt])
+  @@map("activity_logs")
+}
+
+model Household {
+  id        String   @id @default(uuid())
+  name      String
+  ownerId   String   @unique @map("owner_id")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  owner   User              @relation("HouseholdOwner", fields: [ownerId], references: [id], onDelete: Cascade)
+  members HouseholdMember[]
+
+  @@map("households")
+}
+
+model HouseholdMember {
+  id            String   @id @default(uuid())
+  householdId   String   @map("household_id")
+  userId        String?  @unique @map("user_id")
+  inviteEmail   String   @map("invite_email")
+  role          String   @default("MEMBER") // OWNER | ADMIN | MEMBER
+  inviteStatus  String   @default("PENDING") @map("invite_status") // PENDING | ACCEPTED | DECLINED
+  inviteToken   String?  @unique @map("invite_token")
+  permissions   Json?
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  household Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  user      User?     @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([householdId])
+  @@index([inviteToken])
+  @@map("household_members")
 }

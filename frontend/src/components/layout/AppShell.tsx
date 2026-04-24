@@ -40,7 +40,7 @@ export function AppShell({ children }: { children?: React.ReactNode }) {
   const sidebarWidth = sidebarCollapsed ? 72 : 280;
 
   return (
-    <div className="min-h-screen bg-background">
+    <div className="min-h-screen bg-background dark:bg-slate-900">
       {/* Desktop sidebar */}
       <aside
         className="hidden lg:fixed lg:inset-y-0 lg:left-0 lg:flex lg:flex-col z-40 transition-all duration-300"
@@ -51,7 +51,7 @@ export function AppShell({ children }: { children?: React.ReactNode }) {
 
       {/* Main content */}
       <main
-        className="min-h-screen transition-all duration-300 pb-20 lg:pb-0"
+        className="min-h-screen transition-all duration-300 pb-20 lg:pb-0 overflow-x-hidden dark:bg-slate-900"
         style={{ marginLeft: isDesktop ? sidebarWidth : 0 }}
       >
         <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-6 lg:py-8">

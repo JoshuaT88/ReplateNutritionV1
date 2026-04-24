@@ -17,6 +17,13 @@ interface AuthContextValue {
 
 const AuthContext = createContext<AuthContextValue | null>(null);
 
+function applyTheme(theme: string) {
+  const root = document.documentElement;
+  const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+  const isDark = theme === 'dark' || (theme === 'system' && prefersDark);
+  root.classList.toggle('dark', isDark);
+}
+
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [preferences, setPreferences] = useState<UserPreferences | null>(null);
@@ -34,6 +41,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const [me, prefs] = await Promise.all([api.getMe(), api.getPreferences()]);
       setUser(me);
       setPreferences(prefs);
+      applyTheme(prefs?.theme ?? 'light');
     } catch {
       setUser(null);
       setPreferences(null);
@@ -85,6 +93,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const refreshPreferences = async () => {
     const prefs = await api.getPreferences();
     setPreferences(prefs);
+    applyTheme(prefs?.theme ?? 'light');
   };
 
   return (

@@ -3,7 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   History, ShoppingCart, MapPin, Clock, DollarSign, ChevronDown,
-  Check, X, TrendingUp, TrendingDown, Minus, Upload, ScanLine
+  Check, X, TrendingUp, TrendingDown, Minus, Upload, ScanLine, Timer
 } from 'lucide-react';
 import { api } from '@/lib/api';
 import { Badge } from '@/components/ui/badge';
@@ -14,6 +14,7 @@ import { EmptyState } from '@/components/shared/EmptyState';
 import { ErrorCard } from '@/components/shared/ErrorCard';
 import { useToast } from '@/components/ui/toast';
 import { cn, formatCurrency, formatDate } from '@/lib/utils';
+import { fmtDuration } from '@/lib/time';
 
 export default function ShoppingHistoryPage() {
   const { data: history, isLoading, error, refetch } = useQuery({
@@ -155,6 +156,11 @@ function TripCard({ trip }: { trip: any }) {
               <span className="flex items-center gap-0.5">
                 <Clock className="h-3 w-3" /> {formatDate(trip.shoppingDate)}
               </span>
+              {trip.durationSeconds > 0 && (
+                <span className="flex items-center gap-0.5">
+                  <Timer className="h-3 w-3" /> {fmtDuration(trip.durationSeconds)}
+                </span>
+              )}
               {trip.storeName && (
                 <span className="flex items-center gap-0.5">
                   <MapPin className="h-3 w-3" /> {trip.storeName}
@@ -190,6 +196,11 @@ function TripCard({ trip }: { trip: any }) {
             <div className="px-5 pb-4 space-y-3">
               {/* Summary badges */}
               <div className="flex flex-wrap gap-1.5">
+                {trip.durationSeconds > 0 && (
+                  <Badge variant="outline" className="text-[10px]">
+                    <Timer className="h-3 w-3 mr-0.5" /> {fmtDuration(trip.durationSeconds)}
+                  </Badge>
+                )}
                 <Badge variant="outline" className="text-[10px]">
                   <Check className="h-3 w-3 mr-0.5 text-emerald-600" /> {pickedUp.length} picked up
                 </Badge>
@@ -204,6 +215,38 @@ function TripCard({ trip }: { trip: any }) {
                   </Badge>
                 )}
               </div>
+
+              {/* Spend vs Estimated Summary */}
+              {trip.actualCost > 0 && (
+                <div className="rounded-xl bg-slate-50 border border-slate-100 px-4 py-3 grid grid-cols-3 gap-3 text-center">
+                  <div>
+                    <p className="text-[10px] uppercase tracking-wider text-muted font-semibold">Estimated</p>
+                    <p className="text-sm font-bold mt-0.5">{formatCurrency(trip.estimatedCost || 0)}</p>
+                  </div>
+                  <div>
+                    <p className="text-[10px] uppercase tracking-wider text-muted font-semibold">Actual</p>
+                    <p className="text-sm font-bold mt-0.5">{formatCurrency(trip.actualCost)}</p>
+                  </div>
+                  <div>
+                    {trip.estimatedCost > 0 ? (
+                      <>
+                        <p className="text-[10px] uppercase tracking-wider text-muted font-semibold">Difference</p>
+                        <p className={cn('text-sm font-bold mt-0.5',
+                          trip.actualCost <= trip.estimatedCost ? 'text-emerald-600' : 'text-red-600'
+                        )}>
+                          {trip.actualCost <= trip.estimatedCost ? '-' : '+'}
+                          {formatCurrency(Math.abs(trip.actualCost - trip.estimatedCost))}
+                        </p>
+                      </>
+                    ) : (
+                      <>
+                        <p className="text-[10px] uppercase tracking-wider text-muted font-semibold">Items</p>
+                        <p className="text-sm font-bold mt-0.5">{allItems.length}</p>
+                      </>
+                    )}
+                  </div>
+                </div>
+              )}
 
               {/* Item list */}
               <div className="space-y-1">

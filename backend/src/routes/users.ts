@@ -2,15 +2,20 @@ import { Router, Response, NextFunction } from 'express';
 import { authenticate, AuthRequest } from '../middleware/auth.js';
 import prisma from '../config/database.js';
 import bcrypt from 'bcryptjs';
+import crypto from 'crypto';
 import { z } from 'zod';
+import { Resend } from 'resend';
 import { AppError } from '../middleware/errorHandler.js';
 import { emailNotificationsConfigured, sendTestNotificationEmail } from '../services/notification.service.js';
+import { env } from '../config/env.js';
+
+const resend = env.RESEND_API_KEY ? new Resend(env.RESEND_API_KEY) : null;
 
 const preferencesUpdateSchema = z.object({
   zipCode: z.string().trim().max(12).nullable().optional(),
   budget: z.number().nonnegative().nullable().optional(),
   currency: z.string().trim().max(10).optional(),
-  theme: z.enum(['light', 'dark', 'auto']).optional(),
+  theme: z.enum(['light', 'dark', 'system']).optional(),
   firstVisitCompleted: z.boolean().optional(),
   profilePictureUrl: z.string().trim().nullable().optional(),
   householdType: z.string().trim().max(80).nullable().optional(),
@@ -20,6 +25,12 @@ const preferencesUpdateSchema = z.object({
   emailNotificationsEnabled: z.boolean().optional(),
   emailNotificationsDisclosureAccepted: z.boolean().optional(),
   emailNotificationsDisclosureAcceptedAt: z.string().datetime().nullable().optional(),
+  gpsAppPreference: z.enum(['google', 'apple', 'waze', 'system']).nullable().optional(),
+  preferredStoreIds: z.array(z.string().max(200)).max(10).nullable().optional(),
+  pinnedNavItems: z.array(z.string().max(40)).max(4).nullable().optional(),
+  shoppingFrequency: z.enum(['weekly', 'biweekly', 'monthly', 'custom']).nullable().optional(),
+  shoppingDay: z.enum(['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday']).nullable().optional(),
+  perTripBudgetAllocation: z.number().nonnegative().nullable().optional(),
 });
 
 const router = Router();
@@ -121,6 +132,18 @@ router.put('/me/preferences', async (req: AuthRequest, res: Response, next: Next
   } catch (err) { next(err); }
 });
 
+// Manual budget period reset — sets budgetLastResetAt to now so monthly spending is recalculated from this point
+router.post('/me/preferences/budget/reset', authenticate, async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const prefs = await prisma.userPreferences.upsert({
+      where: { userId: req.user!.userId },
+      update: { budgetLastResetAt: new Date() },
+      create: { userId: req.user!.userId, budgetLastResetAt: new Date() },
+    });
+    res.json({ budgetLastResetAt: prefs.budgetLastResetAt });
+  } catch (err) { next(err); }
+});
+
 router.post('/me/preferences/test-email', async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     if (!emailNotificationsConfigured()) {
@@ -187,6 +210,99 @@ router.delete('/me', async (req: AuthRequest, res: Response, next: NextFunction)
   try {
     await prisma.user.delete({ where: { id: req.user!.userId } });
     res.json({ success: true });
+  } catch (err) { next(err); }
+});
+
+// ── Email verification code endpoints (T16) ─────────────────────────────────
+
+router.post('/me/preferences/request-email-verification', async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const userId = req.user!.userId;
+    const user = await prisma.user.findUnique({ where: { id: userId }, select: { email: true, fullName: true } });
+    if (!user) throw new AppError(404, 'User not found');
+
+    if (!resend || !env.FROM_EMAIL) {
+      throw new AppError(503, 'Email service is not configured on this server.');
+    }
+
+    // Delete any existing unused codes for this user/purpose
+    await prisma.emailVerificationCode.deleteMany({
+      where: { userId, purpose: 'notifications', usedAt: null },
+    });
+
+    // Generate a 6-digit code using a cryptographically secure method
+    const codeNum = crypto.randomInt(100000, 1000000);
+    const code = codeNum.toString();
+    const expiresAt = new Date(Date.now() + 5 * 60 * 1000); // 5 minutes
+
+    await prisma.emailVerificationCode.create({
+      data: { userId, code, purpose: 'notifications', expiresAt },
+    });
+
+    const toEmail = env.NODE_ENV === 'production' ? user.email : (env.DEV_EMAIL ?? user.email);
+
+    await resend.emails.send({
+      from: env.FROM_EMAIL,
+      to: toEmail,
+      subject: 'Your Replate verification code',
+      html: `
+        <div style="font-family:Inter,sans-serif;max-width:480px;margin:0 auto;padding:32px 24px;">
+          <h2 style="color:#0F172A;font-size:22px;margin-bottom:8px;">Email Verification</h2>
+          <p style="color:#374151;font-size:15px;margin-bottom:24px;">
+            Use the code below to verify your email for Replate notifications. It expires in 5 minutes.
+          </p>
+          <div style="background:#F1F5F9;border-radius:12px;padding:24px;text-align:center;margin-bottom:24px;">
+            <span style="font-size:36px;font-weight:700;letter-spacing:8px;color:#3B82F6;">${code}</span>
+          </div>
+          <p style="color:#6B7280;font-size:13px;">If you didn't request this, you can safely ignore this email.</p>
+        </div>
+      `,
+    });
+
+    res.json({ sent: true });
+  } catch (err) { next(err); }
+});
+
+router.post('/me/preferences/verify-email-code', async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const userId = req.user!.userId;
+    const { code } = z.object({ code: z.string().length(6).regex(/^\d{6}$/) }).parse(req.body);
+
+    const record = await prisma.emailVerificationCode.findFirst({
+      where: {
+        userId,
+        purpose: 'notifications',
+        code,
+        usedAt: null,
+        expiresAt: { gt: new Date() },
+      },
+    });
+
+    if (!record) throw new AppError(400, 'Invalid or expired verification code.');
+
+    // Mark as used
+    await prisma.emailVerificationCode.update({
+      where: { id: record.id },
+      data: { usedAt: new Date() },
+    });
+
+    // Enable email notifications
+    const prefs = await prisma.userPreferences.upsert({
+      where: { userId },
+      update: {
+        emailNotificationsEnabled: true,
+        emailNotificationsDisclosureAccepted: true,
+        emailNotificationsDisclosureAcceptedAt: new Date(),
+      },
+      create: {
+        userId,
+        emailNotificationsEnabled: true,
+        emailNotificationsDisclosureAccepted: true,
+        emailNotificationsDisclosureAcceptedAt: new Date(),
+      },
+    });
+
+    res.json({ success: true, preferences: prefs });
   } catch (err) { next(err); }
 });
 

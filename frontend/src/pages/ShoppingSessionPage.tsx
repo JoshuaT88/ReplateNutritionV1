@@ -47,6 +47,7 @@ export default function ShoppingSessionPage() {
   const [markPrice, setMarkPrice] = useState('');
   const [markAisle, setMarkAisle] = useState('');
   const [showEndConfirm, setShowEndConfirm] = useState(false);
+  const [showCancelConfirm, setShowCancelConfirm] = useState(false);
   const [showReview, setShowReview] = useState(false);
   const [showAddItem, setShowAddItem] = useState(false);
   const [addItemName, setAddItemName] = useState('');
@@ -91,7 +92,7 @@ export default function ShoppingSessionPage() {
   });
 
   const endSessionMutation = useMutation({
-    mutationFn: () => api.endShoppingSession(sessionId!),
+    mutationFn: () => api.endShoppingSession(sessionId!, elapsedSeconds),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['shoppingHistory'] });
       queryClient.invalidateQueries({ queryKey: ['shoppingList'] });
@@ -99,6 +100,17 @@ export default function ShoppingSessionPage() {
       toast('success', 'Shopping session completed!');
       navigate('/shopping/history');
     },
+  });
+
+  const cancelSessionMutation = useMutation({
+    mutationFn: () => api.cancelShoppingSession(sessionId!),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['shoppingList'] });
+      localStorage.removeItem('active_session_id');
+      toast('success', 'Session cancelled');
+      navigate('/shopping');
+    },
+    onError: (err: Error) => toast('error', 'Failed to cancel session', err.message),
   });
 
   const addItemMutation = useMutation({
@@ -165,7 +177,7 @@ export default function ShoppingSessionPage() {
   }
 
   return (
-    <div className="max-w-2xl mx-auto space-y-4 pb-[calc(6rem+env(safe-area-inset-bottom,0px))] lg:pb-8">
+    <div className="max-w-2xl mx-auto space-y-4 pb-[calc(8rem+env(safe-area-inset-bottom,0px))] lg:pb-8">
       {/* Session Header */}
       <div className="sticky top-0 z-20 bg-background pt-2 pb-4 space-y-3">
         <div className="flex items-center justify-between">
@@ -186,6 +198,12 @@ export default function ShoppingSessionPage() {
               className="flex items-center gap-1 px-2.5 py-1 bg-primary text-white rounded-lg text-xs font-medium hover:bg-primary/90 transition-colors"
             >
               <Plus className="h-3.5 w-3.5" /> Add
+            </button>
+            <button
+              onClick={() => setShowCancelConfirm(true)}
+              className="flex items-center gap-1 px-2.5 py-1 bg-slate-100 text-slate-600 rounded-lg text-xs font-medium hover:bg-slate-200 transition-colors"
+            >
+              Cancel
             </button>
             <button
               onClick={() => setShowEndConfirm(true)}
@@ -622,19 +640,16 @@ export default function ShoppingSessionPage() {
 
               <div>
                 <label className="text-xs font-medium text-muted block mb-1.5">Price paid (total)</label>
-                <div className="relative">
-                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-muted pointer-events-none select-none">$</span>
-                  <Input
-                    type="number"
-                    step="0.01"
-                    min="0"
-                    placeholder="0.00"
-                    value={markPrice}
-                    onChange={(e) => setMarkPrice(e.target.value)}
-                    className="pl-8 text-lg font-mono"
-                    autoFocus
-                  />
-                </div>
+                <Input
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  placeholder="$0.00"
+                  value={markPrice}
+                  onChange={(e) => setMarkPrice(e.target.value)}
+                  className="text-lg font-mono"
+                  autoFocus
+                />
                 <p className="text-[10px] text-muted mt-1">Helps improve future price estimates at this store</p>
               </div>
 
@@ -724,6 +739,31 @@ export default function ShoppingSessionPage() {
               }}
             >
               Review & Finish
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Cancel Session Confirm */}
+      <Dialog open={showCancelConfirm} onOpenChange={setShowCancelConfirm}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Cancel Shopping Session?</DialogTitle>
+          </DialogHeader>
+          <p className="text-sm text-muted my-4">
+            This will discard the session and no history will be saved. Your shopping list items will remain unchanged.
+          </p>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowCancelConfirm(false)}>Keep Shopping</Button>
+            <Button
+              variant="destructive"
+              onClick={() => {
+                setShowCancelConfirm(false);
+                cancelSessionMutation.mutate();
+              }}
+              disabled={cancelSessionMutation.isPending}
+            >
+              {cancelSessionMutation.isPending ? <><Loader2 className="h-4 w-4 animate-spin" /> Cancelling...</> : 'Cancel Session'}
             </Button>
           </DialogFooter>
         </DialogContent>

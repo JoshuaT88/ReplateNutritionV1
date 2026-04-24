@@ -3,6 +3,7 @@ import { motion } from 'framer-motion';
 import {
   LayoutDashboard, Users, Sparkles, CalendarDays, ShoppingCart, History,
   Settings, HelpCircle, ChevronLeft, ChevronRight, LogOut, Utensils, HeadsetIcon, Activity,
+  Package, ChefHat,
 } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
 import { useAuth } from '@/contexts/AuthContext';
@@ -15,13 +16,15 @@ interface SidebarProps {
 }
 
 const navItems = [
-  { to: '/', icon: LayoutDashboard, label: 'Dashboard' },
-  { to: '/profiles', icon: Users, label: 'Profiles' },
-  { to: '/recommendations', icon: Sparkles, label: 'Recommendations' },
-  { to: '/meal-plan', icon: CalendarDays, label: 'Meal Plan' },
-  { to: '/macros', icon: Activity, label: 'Nutrition Log' },
-  { to: '/shopping', icon: ShoppingCart, label: 'Smart Shopping', badge: true },
-  { to: '/shopping/history', icon: History, label: 'Shopping History' },
+  { to: '/', icon: LayoutDashboard, label: 'Dashboard', end: true },
+  { to: '/profiles', icon: Users, label: 'Profiles', end: false },
+  { to: '/recommendations', icon: Sparkles, label: 'Recommendations', end: false },
+  { to: '/meal-plan', icon: CalendarDays, label: 'Meal Plan', end: false },
+  { to: '/macros', icon: Activity, label: 'Nutrition Log', end: false },
+  { to: '/pantry', icon: Package, label: 'Pantry', end: false },
+  { to: '/recipes', icon: ChefHat, label: 'Recipes', end: false },
+  { to: '/shopping', icon: ShoppingCart, label: 'Smart Shopping', badge: true, end: true },
+  { to: '/shopping/history', icon: History, label: 'Shopping History', end: false },
 ];
 
 const systemItems = [
@@ -71,7 +74,7 @@ export function Sidebar({ collapsed, onToggle }: SidebarProps) {
           <NavLink
             key={item.to}
             to={item.to}
-            end={item.to === '/'}
+            end={item.end}
             className={({ isActive }) =>
               cn(
                 'group flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition-all duration-200 relative',

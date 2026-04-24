@@ -4,7 +4,8 @@ import { useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   ShoppingCart, Plus, Sparkles, Trash2, Store, PlayCircle, Loader2,
-  Search, ChevronDown, MapPin, DollarSign, AlertTriangle, Package, Pencil, Check, X
+  Search, ChevronDown, MapPin, DollarSign, AlertTriangle, Package, Pencil, Check, X,
+  Navigation, Calendar
 } from 'lucide-react';
 import { api } from '@/lib/api';
 import { Button } from '@/components/ui/button';
@@ -46,10 +47,14 @@ export default function ShoppingPage() {
   const [newItemCategory, setNewItemCategory] = useState('');
   const [newItemPriority, setNewItemPriority] = useState<'LOW' | 'MEDIUM' | 'HIGH'>('MEDIUM');
   const [newItemMeal, setNewItemMeal] = useState('');
+  const [newItemNotes, setNewItemNotes] = useState('');
+  const [newItemEstPrice, setNewItemEstPrice] = useState('');
+  const [listStore, setListStore] = useState<string>(() => localStorage.getItem('list_store') || '');
   const [search, setSearch] = useState('');
   const [storeSearch, setStoreSearch] = useState('');
   const [customStoreAddress, setCustomStoreAddress] = useState('');
   const [zipCode, setZipCode] = useState('');
+  const [budgetPromptDismissed] = useState(() => localStorage.getItem('budget_prompt_dismissed') === '1');
 
   const { data: shoppingList, isLoading, error, refetch } = useQuery({
     queryKey: ['shoppingList'],
@@ -89,6 +94,9 @@ export default function ShoppingPage() {
       category: newItemCategory || undefined,
       priority: newItemPriority,
       sourceRef: newItemMeal || undefined,
+      notes: newItemNotes || undefined,
+      estimatedPrice: newItemEstPrice ? parseFloat(newItemEstPrice) : undefined,
+      assignedStore: listStore || undefined,
     }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['shoppingList'] });
@@ -97,6 +105,8 @@ export default function ShoppingPage() {
       setNewItemCategory('');
       setNewItemPriority('MEDIUM');
       setNewItemMeal('');
+      setNewItemNotes('');
+      setNewItemEstPrice('');
       setShowAddItem(false);
       toast('success', 'Item added');
     },
@@ -141,13 +151,31 @@ export default function ShoppingPage() {
   });
 
   const tryStartSession = (storeName?: string, storeEstimate?: number) => {
-    const monthlyBudget = preferences?.budget || 0;
+    const tripBudget = preferences?.perTripBudgetAllocation || preferences?.budget || 0;
     const estimate = storeEstimate || totalEstimate || 0;
-    if (monthlyBudget > 0 && estimate > 0 && estimate > monthlyBudget) {
+    if (tripBudget > 0 && estimate > 0 && estimate > tripBudget) {
       setPendingStoreName(storeName);
       setShowBudgetWarning(true);
     } else {
       startSessionMutation.mutate(storeName);
+    }
+  };
+
+  const perTripBudget = preferences?.perTripBudgetAllocation ||
+    (preferences?.budget
+      ? preferences.budget / (preferences.shoppingFrequency === 'biweekly' ? 2 : preferences.shoppingFrequency === 'monthly' ? 1 : 4)
+      : 0);
+
+  const preferredStores: string[] = Array.isArray(preferences?.preferredStoreIds)
+    ? (preferences!.preferredStoreIds as string[])
+    : [];
+
+  const getDirectionsUrl = (address: string) => {
+    const enc = encodeURIComponent(address);
+    switch (preferences?.gpsAppPreference) {
+      case 'apple': return `https://maps.apple.com/?daddr=${enc}`;
+      case 'waze': return `https://waze.com/ul?q=${enc}`;
+      default: return `https://www.google.com/maps/dir/?api=1&destination=${enc}`;
     }
   };
 
@@ -156,11 +184,11 @@ export default function ShoppingPage() {
     item.itemName.toLowerCase().includes(search.toLowerCase())
   );
 
-  // Group by category
-  const grouped = filtered.reduce<Record<string, typeof filtered>>((acc, item) => {
-    const cat = item.category || 'Uncategorized';
-    if (!acc[cat]) acc[cat] = [];
-    acc[cat].push(item);
+  // Group by assigned store, then by category within each store
+  const groupedByStore = filtered.reduce<Record<string, typeof filtered>>((acc, item) => {
+    const store = (item as any).assignedStore || 'Unassigned';
+    if (!acc[store]) acc[store] = [];
+    acc[store].push(item);
     return acc;
   }, {});
 
@@ -180,6 +208,23 @@ export default function ShoppingPage() {
 
   return (
     <div className="space-y-6">
+      {/* Budget setup prompt — shown once if budget/frequency not configured */}
+      {!budgetPromptDismissed && preferences && (!preferences.budget || !preferences.shoppingFrequency) && (
+        <div className="flex items-center justify-between px-4 py-3 rounded-xl bg-amber-50 border border-amber-200">
+          <div className="flex items-center gap-2">
+            <DollarSign className="h-4 w-4 text-amber-600" />
+            <p className="text-sm font-medium text-amber-800">Set your budget to track spending per trip</p>
+          </div>
+          <div className="flex gap-2">
+            <Button size="sm" variant="outline" onClick={() => navigate('/settings')}>Set Up</Button>
+            <Button size="sm" variant="outline" onClick={() => {
+              localStorage.setItem('budget_prompt_dismissed', '1');
+              window.location.reload();
+            }}>Later</Button>
+          </div>
+        </div>
+      )}
+
       {/* Header */}
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
@@ -188,6 +233,23 @@ export default function ShoppingPage() {
             {items.length} item{items.length !== 1 ? 's' : ''}
             {totalEstimate > 0 && <> · Est. {formatCurrency(totalEstimate)}</>}
           </p>
+          {/* Store selector (T25) */}
+          <div className="flex items-center gap-2 mt-2">
+            <Store className="h-3.5 w-3.5 text-muted" />
+            <select
+              value={listStore}
+              onChange={(e) => { setListStore(e.target.value); localStorage.setItem('list_store', e.target.value); }}
+              className="text-xs rounded-lg border border-card-border bg-white px-2 py-1 focus:outline-none focus:ring-2 focus:ring-primary/30"
+            >
+              <option value="">No store selected</option>
+              {preferredStores.map((s) => (
+                <option key={s} value={s}>{s}</option>
+              ))}
+            </select>
+            {listStore && (
+              <span className="text-xs text-muted">Items will be assigned to <strong>{listStore}</strong></span>
+            )}
+          </div>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
           <Button variant="outline" onClick={() => setShowStoreFinder(true)}>
@@ -236,7 +298,7 @@ export default function ShoppingPage() {
         </div>
       )}
 
-      {/* Budget Widget */}
+      {/* Budget Widget - Monthly */}
       {monthlyBudget > 0 && (
         <Card>
           <CardContent className="p-4">
@@ -265,6 +327,43 @@ export default function ShoppingPage() {
             <div className="flex justify-between mt-1.5 text-[10px] text-muted">
               <span>Spent: {formatCurrency(monthlySpent)}</span>
               <span>Budget: {formatCurrency(monthlyBudget)}</span>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Per-trip Budget Bar (T23) */}
+      {perTripBudget > 0 && totalEstimate > 0 && (
+        <Card>
+          <CardContent className="p-4">
+            <div className="flex items-center justify-between mb-2">
+              <div className="flex items-center gap-2">
+                <Calendar className="h-4 w-4 text-primary" />
+                <span className="text-sm font-semibold">This Trip</span>
+              </div>
+              <span className={cn(
+                'text-sm font-bold',
+                totalEstimate > perTripBudget ? 'text-red-600' :
+                totalEstimate / perTripBudget > 0.8 ? 'text-amber-600' : 'text-emerald-600'
+              )}>
+                {totalEstimate > perTripBudget
+                  ? `${formatCurrency(totalEstimate - perTripBudget)} over`
+                  : `${formatCurrency(perTripBudget - totalEstimate)} left`}
+              </span>
+            </div>
+            <div className="h-2 rounded-full bg-slate-100 overflow-hidden">
+              <div
+                className={cn(
+                  'h-full rounded-full transition-all',
+                  totalEstimate / perTripBudget >= 1 ? 'bg-red-500' :
+                  totalEstimate / perTripBudget >= 0.8 ? 'bg-amber-500' : 'bg-emerald-500'
+                )}
+                style={{ width: `${Math.min(100, (totalEstimate / perTripBudget) * 100)}%` }}
+              />
+            </div>
+            <div className="flex justify-between mt-1.5 text-[10px] text-muted">
+              <span>List: {formatCurrency(totalEstimate)}</span>
+              <span>Per-trip: {formatCurrency(perTripBudget)}</span>
             </div>
           </CardContent>
         </Card>
@@ -304,15 +403,37 @@ export default function ShoppingPage() {
         />
       ) : (
         <div className="space-y-4">
-          {Object.entries(grouped).sort(([a], [b]) => a.localeCompare(b)).map(([category, catItems]) => (
-            <CategoryGroup
-              key={category}
-              category={category}
-              items={catItems}
-              onRemove={(id) => removeItemMutation.mutate(id)}
-              onUpdate={(id, data) => updateItemMutation.mutate({ id, data })}
-            />
-          ))}
+          {Object.entries(groupedByStore).sort(([a], [b]) => {
+            if (a === 'Unassigned') return 1;
+            if (b === 'Unassigned') return -1;
+            return a.localeCompare(b);
+          }).map(([storeName, storeItems]) => {
+            const byCategory = storeItems.reduce<Record<string, typeof storeItems>>((acc, item) => {
+              const cat = item.category || 'Uncategorized';
+              if (!acc[cat]) acc[cat] = [];
+              acc[cat].push(item);
+              return acc;
+            }, {});
+            return (
+              <div key={storeName} className="space-y-3">
+                {Object.keys(groupedByStore).length > 1 && (
+                  <div className="flex items-center gap-2">
+                    <Store className="h-3.5 w-3.5 text-muted" />
+                    <span className="text-xs font-semibold uppercase tracking-wider text-muted">{storeName}</span>
+                  </div>
+                )}
+                {Object.entries(byCategory).sort(([a], [b]) => a.localeCompare(b)).map(([category, catItems]) => (
+                  <CategoryGroup
+                    key={`${storeName}-${category}`}
+                    category={category}
+                    items={catItems}
+                    onRemove={(id) => removeItemMutation.mutate(id)}
+                    onUpdate={(id, data) => updateItemMutation.mutate({ id, data })}
+                  />
+                ))}
+              </div>
+            );
+          })}
         </div>
       )}
 
@@ -384,6 +505,42 @@ export default function ShoppingPage() {
                 ))}
               </div>
             </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="text-xs font-medium text-muted block mb-1">Est. price (optional)</label>
+                <Input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  placeholder="$0.00"
+                  value={newItemEstPrice}
+                  onChange={(e) => setNewItemEstPrice(e.target.value)}
+                />
+              </div>
+              {preferredStores.length > 0 && (
+                <div>
+                  <label className="text-xs font-medium text-muted block mb-1">Assign to store</label>
+                  <select
+                    value={listStore}
+                    onChange={(e) => { setListStore(e.target.value); localStorage.setItem('list_store', e.target.value); }}
+                    className="flex h-10 w-full rounded-xl border border-card-border bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary"
+                  >
+                    <option value="">No store</option>
+                    {preferredStores.map((s) => (
+                      <option key={s} value={s}>{s}</option>
+                    ))}
+                  </select>
+                </div>
+              )}
+            </div>
+            <div>
+              <label className="text-xs font-medium text-muted block mb-1">Notes (optional)</label>
+              <Input
+                placeholder="e.g. organic, name brand, aisle 5..."
+                value={newItemNotes}
+                onChange={(e) => setNewItemNotes(e.target.value)}
+              />
+            </div>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setShowAddItem(false)}>Cancel</Button>
@@ -400,10 +557,22 @@ export default function ShoppingPage() {
           <DialogHeader>
             <DialogTitle>Generate from Meal Plan</DialogTitle>
           </DialogHeader>
-          <p className="text-sm text-muted my-4">
-            This will analyze your upcoming meal plan and create a shopping list with all required ingredients,
-            grouped by category with estimated prices.
-          </p>
+          <div className="space-y-3 my-4">
+            <p className="text-sm text-muted">
+              This will analyze your upcoming meal plan and create a shopping list with all required ingredients,
+              grouped by category with estimated prices.
+            </p>
+            {/* T24: budget warning */}
+            {perTripBudget > 0 && (
+              <div className="flex items-start gap-2 rounded-xl bg-amber-50 border border-amber-200 px-3 py-2">
+                <AlertTriangle className="h-4 w-4 text-amber-600 mt-0.5 flex-shrink-0" />
+                <p className="text-xs text-amber-800">
+                  Generated items will be priced against your <strong>{formatCurrency(perTripBudget)}</strong> per-trip budget.
+                  Items that push the list over budget will be highlighted.
+                </p>
+              </div>
+            )}
+          </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setShowGenerateFromMeals(false)}>Cancel</Button>
             <Button onClick={() => generateFromMealsMutation.mutate()} disabled={generateFromMealsMutation.isPending}>
@@ -520,6 +689,17 @@ export default function ShoppingPage() {
                                 : <><PlayCircle className="h-3.5 w-3.5" /> Start Shopping at {store.name}</>
                               }
                             </Button>
+                            {/* Get Directions button (T27) */}
+                            {store.address && (
+                              <a
+                                href={getDirectionsUrl(store.address)}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="flex items-center justify-center gap-1.5 w-full mt-1.5 py-1.5 rounded-xl border border-card-border text-xs font-medium text-muted hover:bg-slate-50 transition-colors"
+                              >
+                                <Navigation className="h-3.5 w-3.5" /> Get Directions
+                              </a>
+                            )}
                           </div>
                         </motion.div>
                       )}

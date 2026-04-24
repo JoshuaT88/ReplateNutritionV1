@@ -1,8 +1,9 @@
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { motion } from 'framer-motion';
-import { ArrowLeft, Edit, Trash2, Loader2 } from 'lucide-react';
+import { ArrowLeft, Edit, Trash2, Loader2, Star, UtensilsCrossed, Check, Clock, PawPrint, Activity } from 'lucide-react';
 import { api } from '@/lib/api';
+import type { ActivityLogEntry } from '@/types';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -23,6 +24,24 @@ export default function ProfileDetailPage() {
   const { data: profile, isLoading } = useQuery({
     queryKey: ['profile', id],
     queryFn: () => api.getProfile(id!),
+    enabled: !!id,
+  });
+
+  const { data: recommendations } = useQuery({
+    queryKey: ['recommendations', { profileId: id }],
+    queryFn: () => api.getRecommendations(id),
+    enabled: !!id,
+  });
+
+  const { data: mealPlans } = useQuery({
+    queryKey: ['mealPlans', { profileId: id }],
+    queryFn: () => api.getMealPlans({ profileId: id }),
+    enabled: !!id,
+  });
+
+  const { data: activityLogs } = useQuery<ActivityLogEntry[]>({
+    queryKey: ['activity', { profileId: id }],
+    queryFn: () => api.getActivity({ profileId: id!, limit: 50 }),
     enabled: !!id,
   });
 
@@ -75,8 +94,12 @@ export default function ProfileDetailPage() {
                   <Badge variant={profile.type === 'HUMAN' ? 'default' : 'gold'}>
                     {profile.type === 'HUMAN' ? '🧑 Human' : `🐾 ${profile.petType || 'Pet'}`}
                   </Badge>
+                  {profile.dietType && (
+                    <Badge variant="secondary" className="text-xs">{profile.dietType}</Badge>
+                  )}
                 </div>
-                {profile.age && <span className="text-sm text-muted">Age {profile.age}</span>}
+                {profile.breed && <span className="text-sm text-muted">{profile.breed}</span>}
+                {profile.age && <span className="text-sm text-muted ml-3">Age {profile.age}</span>}
                 {profile.weight && <span className="text-sm text-muted ml-3">{profile.weight} lbs</span>}
 
                 {allTags.length > 0 && (
@@ -105,6 +128,7 @@ export default function ProfileDetailPage() {
             <TabsTrigger value="overview">Overview</TabsTrigger>
             <TabsTrigger value="recommendations">Recommendations</TabsTrigger>
             <TabsTrigger value="meals">Meal History</TabsTrigger>
+            <TabsTrigger value="activity">Activity</TabsTrigger>
           </TabsList>
 
           <TabsContent value="overview">
@@ -114,6 +138,28 @@ export default function ProfileDetailPage() {
               <InfoSection title="Allergies" items={profile.allergies} emptyText="No allergies." />
               <InfoSection title="Intolerances" items={profile.intolerances} emptyText="No intolerances." />
             </div>
+            {profile.type === 'PET' && profile.feedingSchedule && (
+              <Card className="mt-4">
+                <CardHeader>
+                  <CardTitle className="text-sm flex items-center gap-1.5">
+                    <PawPrint className="h-3.5 w-3.5 text-primary" /> Feeding Schedule
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="flex flex-wrap gap-4 text-sm text-muted">
+                    {profile.feedingSchedule.mealsPerDay && (
+                      <span>{profile.feedingSchedule.mealsPerDay} meal{profile.feedingSchedule.mealsPerDay > 1 ? 's' : ''}/day</span>
+                    )}
+                    {profile.feedingSchedule.amountPerFeeding && (
+                      <span>{profile.feedingSchedule.amountPerFeeding} per feeding</span>
+                    )}
+                    {profile.feedingSchedule.times && profile.feedingSchedule.times.length > 0 && (
+                      <span className="flex items-center gap-1"><Clock className="h-3.5 w-3.5" /> {profile.feedingSchedule.times.join(', ')}</span>
+                    )}
+                  </div>
+                </CardContent>
+              </Card>
+            )}
             {profile.notes && (
               <Card className="mt-4">
                 <CardHeader><CardTitle className="text-sm">Notes</CardTitle></CardHeader>
@@ -123,17 +169,118 @@ export default function ProfileDetailPage() {
           </TabsContent>
 
           <TabsContent value="recommendations">
-            <p className="text-sm text-muted py-8 text-center">
-              View this profile's recommendations on the{' '}
-              <Link to={`/recommendations?profile=${id}`} className="text-primary hover:underline">Recommendations page</Link>.
-            </p>
+            {!recommendations ? (
+              <div className="space-y-3 mt-2">
+                {[1,2,3].map((i) => <Skeleton key={i} className="h-16 w-full" />)}
+              </div>
+            ) : recommendations.length === 0 ? (
+              <div className="text-center py-12">
+                <Star className="h-8 w-8 text-muted mx-auto mb-2 opacity-30" />
+                <p className="text-sm text-muted">No recommendations yet for {profile.name}.</p>
+                <Link to="/recommendations" className="text-primary text-sm hover:underline">Get recommendations →</Link>
+              </div>
+            ) : (
+              <div className="space-y-2 mt-2">
+                {recommendations.slice(0, 20).map((rec) => (
+                  <Card key={rec.id}>
+                    <CardContent className="p-4">
+                      <div className="flex items-start gap-3">
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <p className="text-sm font-medium">{rec.itemName}</p>
+                            <Badge variant="secondary" className="text-[10px]">{rec.itemType}</Badge>
+                            <Badge variant="default" className="text-[10px]">{rec.category}</Badge>
+                          </div>
+                          <p className="text-xs text-muted mt-0.5 line-clamp-2">{rec.reason}</p>
+                        </div>
+                        {rec.isFavorite && <Star className="h-4 w-4 text-amber-400 fill-amber-400 shrink-0" />}
+                      </div>
+                    </CardContent>
+                  </Card>
+                ))}
+                {recommendations.length > 20 && (
+                  <Link to={`/recommendations?profile=${id}`} className="block text-center text-sm text-primary hover:underline py-2">
+                    View all {recommendations.length} recommendations →
+                  </Link>
+                )}
+              </div>
+            )}
           </TabsContent>
 
           <TabsContent value="meals">
-            <p className="text-sm text-muted py-8 text-center">
-              View this profile's meal history on the{' '}
-              <Link to={`/meal-plan?profile=${id}`} className="text-primary hover:underline">Meal Plan page</Link>.
-            </p>
+            {!mealPlans ? (
+              <div className="space-y-3 mt-2">
+                {[1,2,3].map((i) => <Skeleton key={i} className="h-16 w-full" />)}
+              </div>
+            ) : (
+              (() => {
+                const completed = mealPlans.filter((m) => m.completed);
+                return completed.length === 0 ? (
+                  <div className="text-center py-12">
+                    <UtensilsCrossed className="h-8 w-8 text-muted mx-auto mb-2 opacity-30" />
+                    <p className="text-sm text-muted">No completed meals yet for {profile.name}.</p>
+                    <Link to="/meal-plan" className="text-primary text-sm hover:underline">Go to Meal Plan →</Link>
+                  </div>
+                ) : (
+                  <div className="space-y-2 mt-2">
+                    {completed.slice(0, 30).map((meal) => (
+                      <Card key={meal.id}>
+                        <CardContent className="p-4 flex items-center gap-3">
+                          <div className="w-6 h-6 rounded-lg bg-green-100 flex items-center justify-center shrink-0">
+                            <Check className="h-3.5 w-3.5 text-green-600" />
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <p className="text-sm font-medium">{meal.mealName}</p>
+                            <p className="text-xs text-muted capitalize">
+                              {meal.mealType.replace(/_/g, ' ')} · {new Date(meal.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+                            </p>
+                          </div>
+                          {meal.calories && <span className="text-xs text-muted shrink-0">{meal.calories} cal</span>}
+                        </CardContent>
+                      </Card>
+                    ))}
+                    {completed.length > 30 && (
+                      <Link to={`/meal-plan?profile=${id}`} className="block text-center text-sm text-primary hover:underline py-2">
+                        View all {completed.length} completed meals →
+                      </Link>
+                    )}
+                  </div>
+                );
+              })()
+            )}
+          </TabsContent>
+
+          {/* T50: Activity Log tab */}
+          <TabsContent value="activity">
+            {!activityLogs ? (
+              <div className="space-y-3 mt-2">
+                {[1,2,3].map((i) => <Skeleton key={i} className="h-14 w-full" />)}
+              </div>
+            ) : activityLogs.length === 0 ? (
+              <div className="text-center py-12">
+                <Activity className="h-8 w-8 text-muted mx-auto mb-2 opacity-30" />
+                <p className="text-sm text-muted">No activity recorded yet for {profile.name}.</p>
+              </div>
+            ) : (
+              <div className="space-y-1.5 mt-2">
+                {activityLogs.map((log) => (
+                  <div key={log.id} className="flex items-start gap-3 px-3 py-2.5 rounded-xl border border-card-border bg-card">
+                    <div className="w-7 h-7 rounded-lg bg-primary/10 flex items-center justify-center shrink-0 mt-0.5">
+                      <Activity className="h-3.5 w-3.5 text-primary" />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-medium capitalize">
+                        {log.entityType.replace(/_/g, ' ')} {log.action.replace(/_/g, ' ')}
+                        {(log.metadata as any)?.mealName && ` — ${(log.metadata as any).mealName}`}
+                        {(log.metadata as any)?.itemName && ` — ${(log.metadata as any).itemName}`}
+                        {(log.metadata as any)?.name && ` — ${(log.metadata as any).name}`}
+                      </p>
+                      <p className="text-xs text-muted">{new Date(log.createdAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' })}</p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
           </TabsContent>
         </Tabs>
       </motion.div>

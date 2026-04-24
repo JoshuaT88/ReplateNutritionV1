@@ -1,6 +1,7 @@
 import prisma from '../config/database.js';
 import { AppError } from '../middleware/errorHandler.js';
 import * as aiService from './ai.service.js';
+import { validateAndFilterItems } from './allergenSafety.service.js';
 
 export async function getMealPlans(userId: string, profileId?: string, startDate?: string, endDate?: string) {
   const where: any = { userId };
@@ -55,6 +56,7 @@ export async function generateMealPlan(
     type: p.type,
     petType: p.petType || undefined,
     age: p.age || undefined,
+    criticalAllergies: p.criticalAllergies,
     allergies: p.allergies,
     intolerances: p.intolerances,
     dietaryRestrictions: p.dietaryRestrictions,
@@ -111,6 +113,21 @@ export async function generateMealPlan(
     const profile = profiles.find((p) => p.name === meal.profileName);
     if (!profile) continue;
 
+    // Allergen safety check for each meal before saving
+    const [safeMeal] = await validateAndFilterItems(
+      [{ itemName: meal.mealName, ingredients: meal.ingredients || [] }],
+      {
+        name: profile.name,
+        type: profile.type,
+        criticalAllergies: profile.criticalAllergies,
+        allergies: profile.allergies,
+        intolerances: profile.intolerances,
+      }
+    );
+
+    // If blocked (critical allergen hit), skip this meal entirely
+    if (!safeMeal) continue;
+
     // Use the date from the AI response, falling back to the start date
     const mealDate = meal.date || date;
     const saved = await prisma.mealPlan.create({
@@ -123,6 +140,7 @@ export async function generateMealPlan(
         ingredients: meal.ingredients || [],
         preparationNotes: meal.preparationNotes,
         calories: meal.calories,
+        safetyFlag: safeMeal.safetyFlag ?? null,
       },
     });
     savedMeals.push(saved);
@@ -137,6 +155,48 @@ export async function updateMealPlan(userId: string, id: string, data: any) {
 
   if (data.date) data.date = new Date(data.date);
   return prisma.mealPlan.update({ where: { id }, data });
+}
+
+export async function regenerateSingleMeal(userId: string, id: string, dietaryGoals?: string) {
+  const meal = await prisma.mealPlan.findFirst({ where: { id, userId } });
+  if (!meal) throw new AppError(404, 'Meal plan not found');
+
+  const profile = await prisma.profile.findFirst({ where: { id: meal.profileId, userId } });
+  if (!profile) throw new AppError(404, 'Profile not found');
+
+  const dateStr = meal.date.toISOString().split('T')[0];
+
+  const [generated] = await aiService.generateMeals(
+    [{
+      name: profile.name,
+      type: profile.type,
+      petType: profile.petType || undefined,
+      age: profile.age || undefined,
+      criticalAllergies: profile.criticalAllergies,
+      allergies: profile.allergies,
+      intolerances: profile.intolerances,
+      dietaryRestrictions: profile.dietaryRestrictions,
+      specialConditions: profile.specialConditions,
+      foodPreferences: profile.foodPreferences,
+      foodDislikes: profile.foodDislikes,
+    }],
+    [dateStr],
+    [meal.mealType],
+    [meal.mealName], // exclude current meal name
+    dietaryGoals
+  );
+
+  if (!generated) throw new AppError(500, 'AI could not regenerate this meal');
+
+  return prisma.mealPlan.update({
+    where: { id },
+    data: {
+      mealName: generated.mealName,
+      ingredients: generated.ingredients || [],
+      preparationNotes: generated.preparationNotes ?? meal.preparationNotes,
+      calories: generated.calories ?? meal.calories,
+    },
+  });
 }
 
 export async function deleteMealPlan(userId: string, id: string) {

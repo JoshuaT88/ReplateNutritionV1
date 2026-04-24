@@ -81,6 +81,8 @@ export async function addShoppingItem(userId: string, data: any) {
       profileIds: data.profileIds || [],
       priority: data.priority || 'MEDIUM',
       notes: data.notes,
+      estimatedPrice: data.estimatedPrice != null ? Number(data.estimatedPrice) : null,
+      assignedStore: data.assignedStore || null,
     },
   });
 
@@ -433,7 +435,7 @@ export async function submitSessionPrice(
   return { success: true, flaggedOutlier };
 }
 
-export async function endShoppingSession(userId: string, sessionId: string) {
+export async function endShoppingSession(userId: string, sessionId: string, durationSeconds?: number) {
   const session = await prisma.shoppingSession.findFirst({
     where: { id: sessionId, userId },
   });
@@ -453,13 +455,22 @@ export async function endShoppingSession(userId: string, sessionId: string) {
   for (const [id, status] of Object.entries(statuses)) {
     const item = itemMap[id];
     if (!item) continue;
-    const entry = { itemName: item.itemName, quantity: item.quantity, actualPrice: prices[id] || null };
+    const entry = {
+      itemName: item.itemName,
+      quantity: item.quantity,
+      category: item.category,
+      estimatedPrice: (item as any).estimatedPrice ?? null,
+      actualPrice: prices[id] ?? null,
+    };
     if (status === 'PICKED_UP') pickedUp.push(entry);
     else if (status === 'OUT_OF_STOCK') outOfStock.push(entry);
     else if (status === 'TOO_EXPENSIVE') tooExpensive.push(entry);
   }
 
   const actualTotal = Object.values(prices).reduce((sum, p) => sum + p, 0);
+  const estimatedTotal = items
+    .filter((i) => statuses[i.id] === 'PICKED_UP')
+    .reduce((sum, i) => sum + ((i as any).estimatedPrice || 0), 0);
 
   // Create shopping history
   const history = await prisma.shoppingHistory.create({
@@ -468,9 +479,11 @@ export async function endShoppingSession(userId: string, sessionId: string) {
       storeName,
       shoppingDate: session.sessionDate,
       actualCost: actualTotal || null,
+      estimatedCost: estimatedTotal || null,
       itemsPickedUp: pickedUp,
       itemsOutOfStock: outOfStock,
       itemsTooExpensive: tooExpensive,
+      durationSeconds: durationSeconds ?? null,
     },
   });
 
@@ -489,6 +502,19 @@ export async function endShoppingSession(userId: string, sessionId: string) {
   }
 
   return history;
+}
+
+export async function cancelShoppingSession(userId: string, sessionId: string) {
+  const session = await prisma.shoppingSession.findFirst({
+    where: { id: sessionId, userId },
+  });
+  if (!session) throw new AppError(404, 'Shopping session not found');
+
+  // Mark as completed without creating any history record
+  await prisma.shoppingSession.update({
+    where: { id: sessionId },
+    data: { completed: true },
+  });
 }
 
 function calculatePriorityFromDate(mealDate: string | undefined): 'LOW' | 'MEDIUM' | 'HIGH' {

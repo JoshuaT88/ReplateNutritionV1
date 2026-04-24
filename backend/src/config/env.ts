@@ -30,6 +30,7 @@ export const env = {
   S3_SECRET_KEY: process.env.S3_SECRET_KEY,
 
   RESEND_WEBHOOK_SECRET: process.env.RESEND_WEBHOOK_SECRET || '',
+  ADMIN_SECRET: process.env.ADMIN_SECRET || 'replate-admin-secret',
 
   KROGER_CLIENT_ID: process.env.KROGER_CLIENT_ID || '',
   KROGER_CLIENT_SECRET: process.env.KROGER_CLIENT_SECRET || '',

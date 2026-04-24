@@ -3,7 +3,8 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   ChevronLeft, ChevronRight, Loader2, Check, Trash2,
-  Sparkles, Clock, Users, UtensilsCrossed
+  Sparkles, Clock, Users, UtensilsCrossed, AlertTriangle,
+  Pencil, RefreshCw, Plus, List, LayoutGrid, BookMarked, ShoppingCart
 } from 'lucide-react';
 import { api } from '@/lib/api';
 import { Button } from '@/components/ui/button';
@@ -11,7 +12,7 @@ import { Badge } from '@/components/ui/badge';
 import { Card } from '@/components/ui/card';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Skeleton } from '@/components/ui/skeleton';
-
+import { Input } from '@/components/ui/input';
 import { ErrorCard } from '@/components/shared/ErrorCard';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { useToast } from '@/components/ui/toast';
@@ -19,6 +20,7 @@ import { cn, formatDate } from '@/lib/utils';
 import type { MealPlan } from '@/types';
 
 type ViewMode = 'day' | 'week' | '2weeks' | 'month';
+type LayoutMode = 'list' | 'grid';
 
 const ALL_KNOWN_TYPES = ['breakfast', 'lunch', 'dinner', 'snack', 'beverage', 'dessert', 'morning_feed', 'evening_feed', 'treat_time'];
 const MEAL_COLORS: Record<string, string> = {
@@ -81,6 +83,31 @@ export default function MealPlanPage() {
   const [selectedMealTypes, setSelectedMealTypes] = useState<string[]>(['breakfast', 'lunch', 'dinner', 'snack']);
   const [dietaryGoals, setDietaryGoals] = useState('');
   const [filterProfileId, setFilterProfileId] = useState<string>('all');
+  const [layoutMode, setLayoutMode] = useState<LayoutMode>('list');
+
+  // Edit meal state
+  const [editingMeal, setEditingMeal] = useState<MealPlan | null>(null);
+  const [editName, setEditName] = useState('');
+  const [editIngredients, setEditIngredients] = useState('');
+  const [editNotes, setEditNotes] = useState('');
+  const [editServings, setEditServings] = useState('1');
+  const [editCalories, setEditCalories] = useState('');
+
+  // Add meal state
+  const [showAddMeal, setShowAddMeal] = useState(false);
+  const [addMealDate, setAddMealDate] = useState('');
+  const [addMealType, setAddMealType] = useState('dinner');
+  const [addMealName, setAddMealName] = useState('');
+  const [addMealIngredients, setAddMealIngredients] = useState('');
+  const [addMealNotes, setAddMealNotes] = useState('');
+  const [addMealServings, setAddMealServings] = useState('1');
+  const [addMealCalories, setAddMealCalories] = useState('');
+  const [addMealProfileId, setAddMealProfileId] = useState('');
+  const [addMealSaveToLibrary, setAddMealSaveToLibrary] = useState(false);
+
+  // Month day selection for interactive MonthCell
+  const [selectedMonthDate, setSelectedMonthDate] = useState<Date | null>(null);
+  const [selectedMonthMeals, setSelectedMonthMeals] = useState<MealPlan[]>([]);
 
   const dates = useMemo(() => getWeekDates(baseDate, view), [baseDate, view]);
   const toLocalDateStr = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
@@ -125,6 +152,75 @@ export default function MealPlanPage() {
     },
   });
 
+  const editMutation = useMutation({
+    mutationFn: ({ id, data }: { id: string; data: Partial<MealPlan> }) => api.updateMealPlan(id, data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['mealPlans'] });
+      toast('success', 'Meal updated');
+      setEditingMeal(null);
+    },
+    onError: (err: Error) => toast('error', 'Failed to update', err.message),
+  });
+
+  const addMealMutation = useMutation({
+    mutationFn: async () => {
+      const data = {
+        profileId: addMealProfileId || (profiles?.[0]?.id ?? ''),
+        date: addMealDate,
+        mealType: addMealType as any,
+        mealName: addMealName,
+        ingredients: addMealIngredients.split(',').map((s) => s.trim()).filter(Boolean),
+        preparationNotes: addMealNotes || null,
+        servings: addMealServings ? parseInt(addMealServings) : 1,
+        calories: addMealCalories ? parseInt(addMealCalories) : null,
+      };
+      const meal = await api.createMealPlan(data);
+      if (addMealSaveToLibrary) {
+        await api.createCustomMeal({
+          name: addMealName,
+          mealType: addMealType as any,
+          ingredients: data.ingredients,
+          preparationNotes: addMealNotes || null,
+          servings: data.servings,
+          calories: data.calories,
+        });
+      }
+      return meal;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['mealPlans'] });
+      toast('success', 'Meal added!');
+      setShowAddMeal(false);
+      setAddMealName('');
+      setAddMealIngredients('');
+      setAddMealNotes('');
+      setAddMealServings('1');
+      setAddMealCalories('');
+      setAddMealSaveToLibrary(false);
+    },
+    onError: (err: Error) => toast('error', 'Failed to add meal', err.message),
+  });
+
+  const regenerateMutation = useMutation({
+    mutationFn: (id: string) => api.regenerateMealPlan(id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['mealPlans'] });
+      toast('success', 'Meal regenerated!');
+    },
+    onError: (err: Error) => toast('error', 'Failed to regenerate', err.message),
+  });
+
+  const addToShoppingMutation = useMutation({
+    mutationFn: (meal: MealPlan) => api.addIngredientsToList({
+      ingredients: meal.ingredients,
+      mealName: meal.mealName,
+      mealDate: meal.date,
+      profileId: meal.profileId,
+    }),
+    onSuccess: () => toast('success', 'Ingredients added to shopping list!'),
+    onError: (err: Error) => toast('error', 'Failed to add to shopping', err.message),
+  });
+
   const navigateDate = (dir: number) => {
     const next = new Date(baseDate);
     const step = view === 'day' ? 1 : view === 'week' ? 7 : view === '2weeks' ? 14 : 28;
@@ -158,6 +254,13 @@ export default function MealPlanPage() {
         </div>
         <div className="flex items-center gap-2">
           <Button variant="outline" size="sm" onClick={goToday}>Today</Button>
+          <Button variant="outline" size="sm" onClick={() => {
+            const d = new Date();
+            setAddMealDate(`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`);
+            setShowAddMeal(true);
+          }}>
+            <Plus className="h-4 w-4" /> Add Meal
+          </Button>
           <Button onClick={() => setShowGenerate(true)}>
             <Sparkles className="h-4 w-4" /> Generate Plan
           </Button>
@@ -174,14 +277,34 @@ export default function MealPlanPage() {
             <ChevronRight className="h-4 w-4" />
           </Button>
         </div>
-        <Tabs value={view} onValueChange={(v) => setView(v as ViewMode)}>
-          <TabsList>
-            <TabsTrigger value="day">Day</TabsTrigger>
-            <TabsTrigger value="week">Week</TabsTrigger>
-            <TabsTrigger value="2weeks">2 Weeks</TabsTrigger>
-            <TabsTrigger value="month">Month</TabsTrigger>
-          </TabsList>
-        </Tabs>
+        <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1 bg-slate-100 rounded-xl p-1">
+            <button
+              onClick={() => setLayoutMode('list')}
+              className={cn('flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-medium transition-all',
+                layoutMode === 'list' ? 'bg-white shadow-sm text-foreground' : 'text-muted hover:text-foreground'
+              )}
+            >
+              <List className="h-3.5 w-3.5" /> List
+            </button>
+            <button
+              onClick={() => setLayoutMode('grid')}
+              className={cn('flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-medium transition-all',
+                layoutMode === 'grid' ? 'bg-white shadow-sm text-foreground' : 'text-muted hover:text-foreground'
+              )}
+            >
+              <LayoutGrid className="h-3.5 w-3.5" /> Grid
+            </button>
+          </div>
+          <Tabs value={view} onValueChange={(v) => setView(v as ViewMode)}>
+            <TabsList>
+              <TabsTrigger value="day">Day</TabsTrigger>
+              <TabsTrigger value="week">Week</TabsTrigger>
+              <TabsTrigger value="2weeks">2 Weeks</TabsTrigger>
+              <TabsTrigger value="month">Month</TabsTrigger>
+            </TabsList>
+          </Tabs>
+        </div>
       </div>
 
       {/* Profile Filter */}
@@ -237,29 +360,10 @@ export default function MealPlanPage() {
           'gap-3',
           view === 'day' ? 'grid grid-cols-1' :
           view === 'month' ? 'grid grid-cols-7' :
-          view === 'week' ? '' :   // week uses its own layout below
+          layoutMode === 'grid' ? 'grid grid-cols-1 md:grid-cols-2' :
           'grid grid-cols-1'
         )}>
-          {view === 'week' ? (
-            <div className="overflow-x-auto -mx-1 px-1 pb-2">
-              <div className="grid grid-cols-7 gap-2 min-w-[560px]">
-                {dates.map((date) => {
-                  const meals = getMealsForDate(date);
-                  const isToday = isSameDay(date, today);
-                  return (
-                    <WeekColumn
-                      key={date.toISOString()}
-                      date={date}
-                      meals={meals}
-                      isToday={isToday}
-                      onToggle={(id, completed) => toggleMutation.mutate({ id, completed })}
-                      onDelete={(id) => deleteMutation.mutate(id)}
-                    />
-                  );
-                })}
-              </div>
-            </div>
-          ) : dates.map((date) => {
+          {dates.map((date) => {
             const meals = getMealsForDate(date);
             const isToday = isSameDay(date, today);
 
@@ -270,6 +374,7 @@ export default function MealPlanPage() {
                   date={date}
                   meals={meals}
                   isToday={isToday}
+                  onSelect={(d, m) => { setSelectedMonthDate(d); setSelectedMonthMeals(m); }}
                 />
               );
             }
@@ -282,6 +387,21 @@ export default function MealPlanPage() {
                 isToday={isToday}
                 onToggle={(id, completed) => toggleMutation.mutate({ id, completed })}
                 onDelete={(id) => deleteMutation.mutate(id)}
+                onEdit={(meal) => {
+                  setEditingMeal(meal);
+                  setEditName(meal.mealName);
+                  setEditIngredients(meal.ingredients.join(', '));
+                  setEditNotes(meal.preparationNotes || '');
+                  setEditServings(String(meal.servings ?? 1));
+                  setEditCalories(String(meal.calories ?? ''));
+                }}
+                onRegenerate={(id) => regenerateMutation.mutate(id)}
+                onAddToShopping={(meal) => addToShoppingMutation.mutate(meal)}
+                onAddMeal={(date) => {
+                  setAddMealDate(localDateToStr(date));
+                  setShowAddMeal(true);
+                }}
+                isRegenerating={regenerateMutation.isPending}
               />
             );
           })}
@@ -400,90 +520,181 @@ export default function MealPlanPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
-    </div>
-  );
-}
 
-function WeekColumn({ date, meals, isToday, onToggle, onDelete }: {
-  date: Date; meals: MealPlan[]; isToday: boolean;
-  onToggle: (id: string, completed: boolean) => void;
-  onDelete: (id: string) => void;
-}) {
-  const [expandedId, setExpandedId] = useState<string | null>(null);
-  const dayName = date.toLocaleDateString('en-US', { weekday: 'short' });
-  const dayNum = date.getDate();
-
-  return (
-    <div className={cn(
-      'flex flex-col rounded-2xl border bg-white min-w-0',
-      isToday ? 'border-primary/40 ring-1 ring-primary/20' : 'border-card-border'
-    )}>
-      {/* Day header */}
-      <div className={cn(
-        'px-2 py-2 text-center rounded-t-2xl',
-        isToday ? 'bg-primary text-white' : 'bg-slate-50'
-      )}>
-        <p className="text-[10px] font-semibold uppercase tracking-wide opacity-80">{dayName}</p>
-        <p className={cn('text-lg font-bold leading-none mt-0.5', isToday ? 'text-white' : 'text-foreground')}>{dayNum}</p>
-      </div>
-
-      {/* Meal chips */}
-      <div className="flex flex-col gap-1 p-1.5 flex-1">
-        {meals.length === 0 ? (
-          <div className="flex items-center justify-center flex-1 py-4">
-            <UtensilsCrossed className="h-4 w-4 text-slate-200" />
+      {/* Edit Meal Dialog */}
+      <Dialog open={!!editingMeal} onOpenChange={(o) => !o && setEditingMeal(null)}>
+        <DialogContent>
+          <DialogHeader><DialogTitle>Edit Meal</DialogTitle></DialogHeader>
+          <div className="space-y-3">
+            <div>
+              <label className="text-sm font-medium">Meal Name</label>
+              <Input value={editName} onChange={(e) => setEditName(e.target.value)} className="mt-1" />
+            </div>
+            <div>
+              <label className="text-sm font-medium">Ingredients <span className="text-muted font-normal">(comma-separated)</span></label>
+              <Input value={editIngredients} onChange={(e) => setEditIngredients(e.target.value)} className="mt-1" />
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="text-sm font-medium">Servings</label>
+                <Input type="number" value={editServings} onChange={(e) => setEditServings(e.target.value)} className="mt-1" />
+              </div>
+              <div>
+                <label className="text-sm font-medium">Calories</label>
+                <Input type="number" value={editCalories} onChange={(e) => setEditCalories(e.target.value)} className="mt-1" />
+              </div>
+            </div>
+            <div>
+              <label className="text-sm font-medium">Preparation Notes</label>
+              <Input value={editNotes} onChange={(e) => setEditNotes(e.target.value)} className="mt-1" />
+            </div>
           </div>
-        ) : meals.map((meal) => (
-          <div key={meal.id}>
-            <button
-              onClick={() => setExpandedId(expandedId === meal.id ? null : meal.id)}
-              className={cn(
-                'w-full text-left px-1.5 py-1 rounded-lg text-[10px] font-medium border transition-all truncate',
-                MEAL_COLORS[meal.mealType] || 'bg-slate-50 border-slate-200 text-slate-700',
-                meal.completed && 'opacity-50 line-through'
-              )}
-              title={meal.mealName}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setEditingMeal(null)}>Cancel</Button>
+            <Button
+              onClick={() => editingMeal && editMutation.mutate({ id: editingMeal.id, data: {
+                mealName: editName,
+                ingredients: editIngredients.split(',').map((s) => s.trim()).filter(Boolean),
+                preparationNotes: editNotes || null,
+                servings: editServings ? parseInt(editServings) : undefined,
+                calories: editCalories ? parseInt(editCalories) : undefined,
+              }})}
+              disabled={editMutation.isPending || !editName.trim()}
             >
-              {meal.mealName}
-            </button>
-            {expandedId === meal.id && (
-              <div className="mt-1 px-1.5 pb-1 space-y-0.5">
-                {meal.calories && <p className="text-[9px] text-muted">{meal.calories} cal</p>}
-                <div className="flex gap-1 mt-1">
-                  <button
-                    onClick={() => onToggle(meal.id, !meal.completed)}
-                    className="flex-1 flex items-center justify-center gap-0.5 py-0.5 rounded bg-emerald-50 text-emerald-700 text-[9px] font-medium hover:bg-emerald-100 transition-colors"
-                  >
-                    <Check className="h-2.5 w-2.5" />
-                    {meal.completed ? 'Undo' : 'Done'}
-                  </button>
-                  <button
-                    onClick={() => onDelete(meal.id)}
-                    className="p-0.5 rounded bg-red-50 text-red-500 hover:bg-red-100 transition-colors"
-                  >
-                    <Trash2 className="h-2.5 w-2.5" />
-                  </button>
-                </div>
+              {editMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Save'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Add Meal Dialog */}
+      <Dialog open={showAddMeal} onOpenChange={setShowAddMeal}>
+        <DialogContent>
+          <DialogHeader><DialogTitle>Add Meal</DialogTitle></DialogHeader>
+          <div className="space-y-3">
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="text-sm font-medium">Date</label>
+                <Input type="date" value={addMealDate} onChange={(e) => setAddMealDate(e.target.value)} className="mt-1" />
+              </div>
+              <div>
+                <label className="text-sm font-medium">Type</label>
+                <select
+                  value={addMealType}
+                  onChange={(e) => setAddMealType(e.target.value)}
+                  className="mt-1 flex h-10 w-full rounded-xl border border-card-border bg-white px-3 py-2 text-sm"
+                >
+                  {ALL_KNOWN_TYPES.map((t) => <option key={t} value={t}>{t.replace(/_/g, ' ')}</option>)}
+                </select>
+              </div>
+            </div>
+            {profiles && profiles.length > 0 && (
+              <div>
+                <label className="text-sm font-medium">Profile</label>
+                <select
+                  value={addMealProfileId || profiles[0]?.id}
+                  onChange={(e) => setAddMealProfileId(e.target.value)}
+                  className="mt-1 flex h-10 w-full rounded-xl border border-card-border bg-white px-3 py-2 text-sm"
+                >
+                  {profiles.filter((p) => (p as any).dietType !== 'kibble').map((p) => (
+                    <option key={p.id} value={p.id}>{p.name}</option>
+                  ))}
+                </select>
               </div>
             )}
+            <div>
+              <label className="text-sm font-medium">Meal Name</label>
+              <Input value={addMealName} onChange={(e) => setAddMealName(e.target.value)} className="mt-1" />
+            </div>
+            <div>
+              <label className="text-sm font-medium">Ingredients <span className="text-muted font-normal">(comma-separated)</span></label>
+              <Input value={addMealIngredients} onChange={(e) => setAddMealIngredients(e.target.value)} className="mt-1" />
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="text-sm font-medium">Servings</label>
+                <Input type="number" value={addMealServings} onChange={(e) => setAddMealServings(e.target.value)} className="mt-1" />
+              </div>
+              <div>
+                <label className="text-sm font-medium">Calories</label>
+                <Input type="number" value={addMealCalories} onChange={(e) => setAddMealCalories(e.target.value)} className="mt-1" />
+              </div>
+            </div>
+            <div>
+              <label className="text-sm font-medium">Prep Notes</label>
+              <Input value={addMealNotes} onChange={(e) => setAddMealNotes(e.target.value)} className="mt-1" />
+            </div>
+            <label className="flex items-center gap-2 text-sm cursor-pointer">
+              <input
+                type="checkbox"
+                checked={addMealSaveToLibrary}
+                onChange={(e) => setAddMealSaveToLibrary(e.target.checked)}
+                className="rounded"
+              />
+              <BookMarked className="h-3.5 w-3.5 text-primary" /> Save to My Meals Library
+            </label>
           </div>
-        ))}
-      </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowAddMeal(false)}>Cancel</Button>
+            <Button
+              onClick={() => addMealMutation.mutate()}
+              disabled={addMealMutation.isPending || !addMealName.trim() || !addMealDate}
+            >
+              {addMealMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Add Meal'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
-      {/* Meal count badge */}
-      {meals.length > 0 && (
-        <div className="px-2 pb-1.5 text-center">
-          <span className="text-[9px] text-muted">{meals.filter(m => m.completed).length}/{meals.length}</span>
-        </div>
-      )}
+      {/* Month Day Detail Dialog */}
+      <Dialog open={!!selectedMonthDate} onOpenChange={(o) => !o && setSelectedMonthDate(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>
+              {selectedMonthDate?.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-2 max-h-[60vh] overflow-y-auto">
+            {selectedMonthMeals.length === 0 ? (
+              <p className="text-sm text-muted text-center py-6">No meals planned</p>
+            ) : (
+              selectedMonthMeals.map((meal) => (
+                <div key={meal.id} className={cn('flex items-start gap-3 px-3 py-2.5 rounded-xl border', MEAL_COLORS[meal.mealType] || 'bg-slate-50 border-slate-200')}>
+                  <div className="flex-1">
+                    <p className="text-sm font-medium">{meal.mealName}</p>
+                    <p className="text-xs text-muted capitalize">{meal.mealType.replace(/_/g, ' ')}</p>
+                  </div>
+                  {meal.completed && <Check className="h-4 w-4 text-green-500 mt-0.5 shrink-0" />}
+                </div>
+              ))
+            )}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => {
+              if (selectedMonthDate) {
+                setAddMealDate(localDateToStr(selectedMonthDate));
+                setSelectedMonthDate(null);
+                setShowAddMeal(true);
+              }
+            }}>
+              <Plus className="h-4 w-4" /> Add Meal
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
 
-function DayRow({ date, meals, isToday, onToggle, onDelete }: {
+function DayRow({ date, meals, isToday, onToggle, onDelete, onEdit, onRegenerate, onAddToShopping, onAddMeal, isRegenerating }: {
   date: Date; meals: MealPlan[]; isToday: boolean;
   onToggle: (id: string, completed: boolean) => void;
   onDelete: (id: string) => void;
+  onEdit: (meal: MealPlan) => void;
+  onRegenerate: (id: string) => void;
+  onAddToShopping: (meal: MealPlan) => void;
+  onAddMeal: (date: Date) => void;
+  isRegenerating: boolean;
 }) {
   const [expanded, setExpanded] = useState(isToday);
   const dayName = date.toLocaleDateString('en-US', { weekday: 'short' });
@@ -564,7 +775,14 @@ function DayRow({ date, meals, isToday, onToggle, onDelete }: {
                             {meal.completed && <Check className="h-3 w-3 text-white" />}
                           </button>
                           <div className="flex-1 min-w-0">
-                            <p className={cn('text-sm font-medium', meal.completed && 'line-through')}>{meal.mealName}</p>
+                            <div className="flex items-center gap-1.5">
+                              <p className={cn('text-sm font-medium', meal.completed && 'line-through')}>{meal.mealName}</p>
+                              {meal.safetyFlag?.startsWith('WARNING') && (
+                                <span title={`Allergen flag: ${meal.safetyFlag.replace('WARNING:', '')}`}>
+                                  <AlertTriangle className="h-3.5 w-3.5 text-amber-500 shrink-0" />
+                                </span>
+                              )}
+                            </div>
                             {meal.servings && (
                               <div className="flex items-center gap-2 mt-0.5 text-[10px] text-muted">
                                 <span className="flex items-center gap-0.5"><Users className="h-3 w-3" /> {meal.servings} servings</span>
@@ -572,9 +790,20 @@ function DayRow({ date, meals, isToday, onToggle, onDelete }: {
                               </div>
                             )}
                           </div>
-                          <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => onDelete(meal.id)}>
-                            <Trash2 className="h-3 w-3 text-muted" />
-                          </Button>
+                          <div className="flex items-center gap-1">
+                            <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => onEdit(meal)} title="Edit">
+                              <Pencil className="h-3 w-3 text-muted" />
+                            </Button>
+                            <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => onRegenerate(meal.id)} title="Regenerate" disabled={isRegenerating}>
+                              <RefreshCw className={cn('h-3 w-3 text-muted', isRegenerating && 'animate-spin')} />
+                            </Button>
+                            <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => onAddToShopping(meal)} title="Add to shopping list">
+                              <ShoppingCart className="h-3 w-3 text-muted" />
+                            </Button>
+                            <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => onDelete(meal.id)} title="Delete">
+                              <Trash2 className="h-3 w-3 text-muted" />
+                            </Button>
+                          </div>
                         </div>
                       ))}
                     </div>
@@ -587,6 +816,12 @@ function DayRow({ date, meals, isToday, onToggle, onDelete }: {
                   <UtensilsCrossed className="h-4 w-4 mr-2" /> No meals planned for this day
                 </div>
               )}
+              <button
+                onClick={() => onAddMeal(date)}
+                className="w-full flex items-center justify-center gap-1 py-2 text-xs text-muted hover:text-foreground hover:bg-slate-50 rounded-lg border border-dashed transition-colors"
+              >
+                <Plus className="h-3 w-3" /> Add Meal
+              </button>
             </div>
           </motion.div>
         )}
@@ -595,12 +830,18 @@ function DayRow({ date, meals, isToday, onToggle, onDelete }: {
   );
 }
 
-function MonthCell({ date, meals, isToday }: { date: Date; meals: MealPlan[]; isToday: boolean }) {
+function MonthCell({ date, meals, isToday, onSelect }: {
+  date: Date; meals: MealPlan[]; isToday: boolean;
+  onSelect: (date: Date, meals: MealPlan[]) => void;
+}) {
   return (
-    <div className={cn(
-      'border border-card-border rounded-xl p-2 min-h-[80px]',
-      isToday ? 'bg-primary/5 border-primary/30' : 'bg-white'
-    )}>
+    <button
+      onClick={() => onSelect(date, meals)}
+      className={cn(
+        'border border-card-border rounded-xl p-2 min-h-[80px] text-left w-full hover:shadow-sm transition-shadow',
+        isToday ? 'bg-primary/5 border-primary/30' : 'bg-white'
+      )}
+    >
       <p className={cn(
         'text-xs font-semibold mb-1',
         isToday ? 'text-primary' : 'text-muted'
@@ -620,6 +861,6 @@ function MonthCell({ date, meals, isToday }: { date: Date; meals: MealPlan[]; is
           <p className="text-[9px] text-muted text-center">+{meals.length - 3} more</p>
         )}
       </div>
-    </div>
+    </button>
   );
 }

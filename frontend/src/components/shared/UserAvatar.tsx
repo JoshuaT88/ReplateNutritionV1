@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { cn, getInitials, getAvatarGradient } from '@/lib/utils';
 
 interface UserAvatarProps {
@@ -15,13 +16,15 @@ const sizes = {
 
 export function UserAvatar({ name, imageUrl, size = 'md', className }: UserAvatarProps) {
   const gradient = getAvatarGradient(name);
+  const [imgError, setImgError] = useState(false);
 
-  if (imageUrl) {
+  if (imageUrl && !imgError) {
     return (
       <img
         src={imageUrl}
         alt={name}
         className={cn('rounded-xl object-cover', sizes[size], className)}
+        onError={() => setImgError(true)}
       />
     );
   }

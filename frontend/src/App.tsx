@@ -26,6 +26,9 @@ const SupportPage = lazy(() => import('@/pages/SupportPage'));
 const NotFoundPage = lazy(() => import('@/pages/NotFoundPage'));
 const SharePage = lazy(() => import('@/pages/SharePage'));
 const MacroLogPage = lazy(() => import('@/pages/MacroLogPage'));
+const PantryPage = lazy(() => import('@/pages/PantryPage'));
+const RecipesPage = lazy(() => import('@/pages/RecipesPage'));
+const JoinHouseholdPage = lazy(() => import('@/pages/JoinHouseholdPage'));
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -86,6 +89,7 @@ export default function App() {
 
               {/* Fully public — no auth wrapper */}
               <Route path="/share/:token" element={<Suspense fallback={<PageSpinner />}><SharePage /></Suspense>} />
+              <Route path="/join" element={<Suspense fallback={<PageSpinner />}><JoinHouseholdPage /></Suspense>} />
 
               {/* Protected routes */}
               <Route element={<ProtectedRoute />}>
@@ -101,6 +105,8 @@ export default function App() {
                 <Route path="/shopping/history" element={<ShoppingHistoryPage />} />
                 <Route path="/settings" element={<SettingsPage />} />
                 <Route path="/macros" element={<MacroLogPage />} />
+                <Route path="/pantry" element={<PantryPage />} />
+                <Route path="/recipes" element={<RecipesPage />} />
                 <Route path="/help" element={<HelpPage />} />
                 <Route path="/support" element={<SupportPage />} />
               </Route>

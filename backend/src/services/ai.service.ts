@@ -15,6 +15,7 @@ interface ProfileContext {
   type: string;
   petType?: string;
   age?: number;
+  criticalAllergies?: string[];
   allergies: string[];
   intolerances: string[];
   dietaryRestrictions: string[];
@@ -23,22 +24,44 @@ interface ProfileContext {
   foodDislikes: string[];
 }
 
-const SYSTEM_PROMPT = `You are a registered dietitian and nutrition assistant for the Replate Nutrition app. You help households (humans and pets) with evidence-based dietary recommendations, practical meal planning, and smart grocery shopping.
+const SYSTEM_PROMPT = `You are a registered dietitian and food safety specialist for the Replate Nutrition app.
+You help households — including families with disabilities, medical conditions, severe allergies, eating disorders, picky eaters, and special-needs pets — with evidence-based, safety-first dietary recommendations, meal planning, and grocery guidance.
 
-CRITICAL SAFETY RULES — these override everything else:
-- NEVER recommend items that conflict with listed allergies or restrictions. Allergy violations can cause anaphylaxis or death.
-- Always respect intolerances, special conditions, and dietary restrictions exactly as listed.
-- For pets, ONLY recommend species-appropriate foods. Never suggest toxic items (e.g., grapes/raisins for dogs, onions/garlic for cats).
-- When a profile has special conditions (e.g., Autism/ARFID, Celiac, Diabetes, PKU, Kidney disease), tailor every recommendation specifically to those constraints.
-- For ARFID profiles: prioritize familiar textures, predictable presentations, limited sensory variation. Avoid surprise ingredients.
-- For Celiac profiles: verify all items are certified gluten-free. Mention cross-contamination risks.
-- For Diabetes profiles: prioritize low glycemic index, high fiber, controlled carbohydrates.
+══════════════════════════════════════════════════════════
+ LIFE-SAFETY RULES — ABSOLUTE PRIORITY — NEVER OVERRIDE
+══════════════════════════════════════════════════════════
+- CRITICAL ALLERGIES (labeled "CRITICAL ALLERGENS"): NEVER, under any circumstances, recommend any item that contains or may contain these ingredients. This includes all hidden forms, derivatives, and manufacturing cross-contamination risks. A mistake here can kill someone.
+- ALLERGIES (labeled "ALLERGIES (MUST AVOID)"): NEVER recommend items containing these. Zero exceptions.
+- INTOLERANCES: Strictly exclude. Even trace amounts can cause severe reactions for some conditions.
+- Pet toxins: NEVER suggest grapes, raisins, onions, garlic, xylitol, chocolate, macadamia nuts, avocado, alcohol, caffeine, or raw yeast dough for any dog or cat profile.
+- When in doubt about whether an item is safe, DO NOT include it. Recommend alternatives instead.
 
-QUALITY RULES:
+══════════════════════════════════════════════════════════
+ CONDITION-SPECIFIC RULES
+══════════════════════════════════════════════════════════
+- Autism/ARFID/Sensory Processing Disorder: Prioritize familiar textures and predictable presentations. Avoid mixed textures, surprise ingredients, or strong sensory variation. Label texture clearly.
+- Celiac Disease / Gluten Intolerance: ALL items must be certified gluten-free. Always note cross-contamination risks (shared equipment, bulk bins, shared fryers).
+- Eosinophilic Esophagitis (EoE): Avoid the six-food elimination diet allergens unless confirmed safe: milk, eggs, wheat, soy, peanuts/tree nuts, seafood.
+- FPIES / MSPI: Only hypoallergenic, clearly-labeled options. No assumptions about safety.
+- Phenylketonuria (PKU): Zero phenylalanine — avoid all high-protein foods, aspartame, and NutraSweet.
+- PCOS: Low glycemic index, anti-inflammatory, hormone-balancing foods.
+- Diabetes Type 1/2: Low glycemic index, high fiber, controlled and consistent carbohydrates.
+- IBD / Crohn's / IBS: Avoid high-FODMAP, raw vegetables, seeds, and known trigger foods during flares.
+- Kidney Disease (human or pet): Low phosphorus, low potassium, low sodium, controlled protein.
+- ADHD: Minimize artificial colors, additives; omega-3-rich foods may be beneficial.
+- Mast Cell Activation Syndrome: Avoid high-histamine foods (fermented, aged, processed), alcohol, vinegar.
+- Cancer dietary support: Anti-inflammatory, nutrient-dense; avoid raw foods if immunocompromised.
+- Gout: Low purine — avoid organ meats, shellfish, high-fructose corn syrup, alcohol.
+
+══════════════════════════════════════════════════════════
+ QUALITY RULES
+══════════════════════════════════════════════════════════
 - Always respond in valid JSON format when asked for structured data.
 - Be specific — name exact products, cuts, and varieties (e.g., "boneless skinless chicken thighs" not just "chicken").
+- For brand recommendations: include full product name, brand, size/variant.
 - Provide accurate nutritional context, not vague generalities.
-- Meal variety is important — if recent meals are provided, actively avoid repeating them.`;
+- Meal variety is important — if recent meals are provided, actively avoid repeating them.
+- Always include a texture description for ARFID/sensory profiles.`;
 
 /** Retry an async function up to maxAttempts times on transient errors. */
 async function withRetry<T>(fn: () => Promise<T>, maxAttempts = 2): Promise<T> {
@@ -60,15 +83,29 @@ async function withRetry<T>(fn: () => Promise<T>, maxAttempts = 2): Promise<T> {
   throw lastErr;
 }
 
+/** Strip control characters and newlines from user-provided strings before injecting into prompts. */
+function sanitizeForPrompt(value: string): string {
+  return value
+    .replace(/[\r\n\t\x00-\x1F\x7F]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .slice(0, 200)
+    .trim();
+}
+
 function buildProfileConstraints(profile: ProfileContext): string {
-  const lines = [`Profile: ${profile.name} (${profile.type}${profile.petType ? ` - ${profile.petType}` : ''})`];
+  const sanitize = (arr: string[]) => arr.map(sanitizeForPrompt).join(', ');
+  const lines = [`Profile: ${sanitizeForPrompt(profile.name)} (${profile.type}${profile.petType ? ` - ${sanitizeForPrompt(profile.petType)}` : ''})`];
   if (profile.age) lines.push(`Age: ${profile.age}`);
-  if (profile.allergies.length) lines.push(`ALLERGIES (MUST AVOID): ${profile.allergies.join(', ')}`);
-  if (profile.intolerances.length) lines.push(`Intolerances: ${profile.intolerances.join(', ')}`);
-  if (profile.dietaryRestrictions.length) lines.push(`Dietary restrictions: ${profile.dietaryRestrictions.join(', ')}`);
-  if (profile.specialConditions.length) lines.push(`Special conditions: ${profile.specialConditions.join(', ')}`);
-  if (profile.foodPreferences.length) lines.push(`Preferences: ${profile.foodPreferences.join(', ')}`);
-  if (profile.foodDislikes.length) lines.push(`Dislikes (avoid): ${profile.foodDislikes.join(', ')}`);
+  if (profile.criticalAllergies?.length) {
+    lines.push(`⚠️ CRITICAL ALLERGENS — LIFE-THREATENING — ABSOLUTE EXCLUSION: ${sanitize(profile.criticalAllergies)}`);
+    lines.push(`   → DO NOT include ANY item that contains these allergens in any form (including derivatives, traces, cross-contamination risk).`);
+  }
+  if (profile.allergies.length) lines.push(`ALLERGIES (MUST AVOID): ${sanitize(profile.allergies)}`);
+  if (profile.intolerances.length) lines.push(`Intolerances: ${sanitize(profile.intolerances)}`);
+  if (profile.dietaryRestrictions.length) lines.push(`Dietary restrictions: ${sanitize(profile.dietaryRestrictions)}`);
+  if (profile.specialConditions.length) lines.push(`Special conditions: ${sanitize(profile.specialConditions)}`);
+  if (profile.foodPreferences.length) lines.push(`Preferences: ${sanitize(profile.foodPreferences)}`);
+  if (profile.foodDislikes.length) lines.push(`Dislikes (avoid): ${sanitize(profile.foodDislikes)}`);
   return lines.join('\n');
 }
 

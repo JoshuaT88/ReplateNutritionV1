@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 
 import { motion } from 'framer-motion';
-import { Sparkles, Star, ShoppingCart, CalendarDays, Loader2, Trash2, ChevronDown, Search, UtensilsCrossed, Tag, Leaf } from 'lucide-react';
+import { Sparkles, Star, ShoppingCart, CalendarDays, Loader2, Trash2, ChevronDown, Search, UtensilsCrossed, Tag, Leaf, AlertTriangle } from 'lucide-react';
 import { api } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -402,11 +402,16 @@ function RecommendationCard({ rec, onFavorite, onDelete, onAddToList, onAddToMea
             </button>
           </div>
 
-          <div className="flex items-center gap-1.5 mb-3">
+          <div className="flex items-center gap-1.5 mb-3 flex-wrap">
             <Badge variant="secondary" className="text-[10px] capitalize">{rec.itemType}</Badge>
             <Badge className="text-[10px] capitalize">{rec.category}</Badge>
             {rec.priceRange && <span className="text-[10px] text-muted font-mono">{rec.priceRange}</span>}
             {rec.profile && <Badge variant="outline" className="text-[10px]">{rec.profile.name}</Badge>}
+            {rec.safetyFlag?.startsWith('WARNING') && (
+              <span className="inline-flex items-center gap-0.5 text-[10px] font-medium text-amber-700 bg-amber-50 border border-amber-200 rounded-full px-1.5 py-0.5">
+                <AlertTriangle className="h-2.5 w-2.5" /> Contains allergen
+              </span>
+            )}
           </div>
 
           <p className={cn('text-xs text-muted leading-relaxed', !expanded && 'line-clamp-3')}>

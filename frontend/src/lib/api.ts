@@ -1,4 +1,4 @@
-import type { AuthResponse, User, UserPreferences, Profile, ProfileFormData, Recommendation, MealPlan, ShoppingItem, ShoppingHistory, ShoppingSession, StoreResult, ReceiptOcrResult } from '@/types';
+import type { AuthResponse, User, UserPreferences, Profile, ProfileFormData, Recommendation, MealPlan, CustomMeal, ShoppingItem, ShoppingHistory, ShoppingSession, StoreResult, ReceiptOcrResult, ActivityLogEntry, Household, HouseholdMember, DataExportStatus } from '@/types';
 
 const API_BASE = '/api';
 
@@ -64,6 +64,24 @@ class ApiClient {
     return res.json();
   }
 
+  private async requestFormData<T>(path: string, form: FormData): Promise<T> {
+    const headers: Record<string, string> = {};
+    if (this.accessToken) headers['Authorization'] = `Bearer ${this.accessToken}`;
+    let res = await fetch(`${API_BASE}${path}`, { method: 'POST', headers, body: form });
+    if (res.status === 401 && this.refreshToken) {
+      const refreshed = await this.tryRefresh();
+      if (refreshed) {
+        headers['Authorization'] = `Bearer ${this.accessToken}`;
+        res = await fetch(`${API_BASE}${path}`, { method: 'POST', headers, body: form });
+      }
+    }
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({ error: 'Upload failed' }));
+      throw new Error(body.error || `Upload failed (${res.status})`);
+    }
+    return res.json();
+  }
+
   private async tryRefresh(): Promise<boolean> {
     try {
       const res = await fetch(`${API_BASE}/auth/refresh`, {
@@ -123,6 +141,16 @@ class ApiClient {
       method: 'POST',
     });
   }
+  requestEmailVerification() {
+    return this.request<{ sent: boolean }>('/users/me/preferences/request-email-verification', {
+      method: 'POST',
+    });
+  }
+  verifyEmailCode(code: string) {
+    return this.request<{ success: boolean; preferences: UserPreferences }>('/users/me/preferences/verify-email-code', {
+      method: 'POST', body: JSON.stringify({ code }),
+    });
+  }
 
   // === Profiles ===
   getProfiles() { return this.request<Profile[]>('/profiles'); }
@@ -175,6 +203,23 @@ class ApiClient {
   deleteMealPlan(id: string) {
     return this.request(`/meal-plan/${id}`, { method: 'DELETE' });
   }
+  regenerateMealPlan(id: string, dietaryGoals?: string) {
+    return this.request<MealPlan>(`/meal-plan/${id}/regenerate`, {
+      method: 'POST', body: JSON.stringify({ dietaryGoals }),
+    });
+  }
+  getCustomMeals() {
+    return this.request<CustomMeal[]>('/meal-plan/custom-meals');
+  }
+  createCustomMeal(data: Partial<CustomMeal>) {
+    return this.request<CustomMeal>('/meal-plan/custom-meals', { method: 'POST', body: JSON.stringify(data) });
+  }
+  updateCustomMeal(id: string, data: Partial<CustomMeal>) {
+    return this.request<CustomMeal>(`/meal-plan/custom-meals/${id}`, { method: 'PUT', body: JSON.stringify(data) });
+  }
+  deleteCustomMeal(id: string) {
+    return this.request(`/meal-plan/custom-meals/${id}`, { method: 'DELETE' });
+  }
 
   // === Shopping ===
   getShoppingList() { return this.request<ShoppingItem[]>('/shopping/list'); }
@@ -224,8 +269,14 @@ class ApiClient {
       method: 'POST', body: JSON.stringify({ aisle }),
     });
   }
-  endShoppingSession(sessionId: string) {
-    return this.request<ShoppingHistory>(`/shopping/session/${sessionId}/end`, { method: 'POST' });
+  endShoppingSession(sessionId: string, durationSeconds?: number) {
+    return this.request<ShoppingHistory>(`/shopping/session/${sessionId}/end`, {
+      method: 'POST',
+      body: JSON.stringify({ durationSeconds }),
+    });
+  }
+  cancelShoppingSession(sessionId: string) {
+    return this.request(`/shopping/session/${sessionId}/cancel`, { method: 'POST' });
   }
   removeShoppingItem(id: string) {
     return this.request(`/shopping/list/${id}`, { method: 'DELETE' });
@@ -347,14 +398,17 @@ class ApiClient {
   }
 
   // === Macros ===
-  getMacros(date?: string) {
-    const q = date ? `?date=${date}` : '';
+  getMacros(date?: string, profileId?: string) {
+    const params = new URLSearchParams();
+    if (date) params.set('date', date);
+    if (profileId) params.set('profileId', profileId);
+    const q = params.toString() ? `?${params}` : '';
     return this.request<{ logs: any[]; totals: any; date: string }>(`/macros${q}`);
   }
   getMacroSummary(days = 7) {
     return this.request<{ summary: Record<string, any>; days: number }>(`/macros/summary?days=${days}`);
   }
-  logMacro(data: { date?: string; mealName: string; calories?: number; protein?: number; carbs?: number; fat?: number; fiber?: number; notes?: string }) {
+  logMacro(data: { date?: string; mealName: string; calories?: number; protein?: number; carbs?: number; fat?: number; fiber?: number; notes?: string; profileId?: string }) {
     return this.request<any>('/macros', { method: 'POST', body: JSON.stringify(data) });
   }
   updateMacro(id: string, data: Partial<{ mealName: string; calories: number; protein: number; carbs: number; fat: number; fiber: number; notes: string }>) {
@@ -415,6 +469,147 @@ class ApiClient {
   }
   deleteAccount() {
     return this.request('/users/me', { method: 'DELETE' });
+  }
+
+  // === Budget Reset ===
+  resetBudget() {
+    return this.request<{ budgetLastResetAt: string }>('/users/me/preferences/budget/reset', { method: 'POST' });
+  }
+
+  // === Pantry ===
+  getPantryItems() {
+    return this.request<any[]>('/pantry');
+  }
+  getExpiringPantryItems(days = 3) {
+    return this.request<any[]>(`/pantry/expiring?days=${days}`);
+  }
+  checkPantryForItems(itemNames: string[]) {
+    return this.request<{ itemName: string; inPantry: boolean }[]>('/pantry/check', {
+      method: 'POST', body: JSON.stringify({ itemNames }),
+    });
+  }
+  addPantryItem(data: {
+    itemName: string; category?: string; quantity?: string; unit?: string;
+    expiresAt?: string; purchasedAt?: string; notes?: string; lowStockAlert?: boolean;
+  }) {
+    return this.request<any>('/pantry', { method: 'POST', body: JSON.stringify(data) });
+  }
+  updatePantryItem(id: string, data: Partial<{
+    itemName: string; category: string; quantity: string; unit: string;
+    expiresAt: string | null; purchasedAt: string; notes: string; lowStockAlert: boolean;
+  }>) {
+    return this.request<any>(`/pantry/${id}`, { method: 'PUT', body: JSON.stringify(data) });
+  }
+  deletePantryItem(id: string) {
+    return this.request<{ success: boolean }>(`/pantry/${id}`, { method: 'DELETE' });
+  }
+
+  // === Recipes ===
+  searchRecipes(q: string) {
+    return this.request<any[]>(`/recipes/search?q=${encodeURIComponent(q)}`);
+  }
+  getRecipeCategories() {
+    return this.request<string[]>('/recipes/categories');
+  }
+  getRecipesByCategory(category: string) {
+    return this.request<any[]>(`/recipes/by-category/${encodeURIComponent(category)}`);
+  }
+  getRecipe(id: string) {
+    return this.request<any>(`/recipes/${id}`);
+  }
+  addRecipeToList(id: string, data: { servings?: number; listGroupId?: string }) {
+    return this.request<{ added: number; recipeName: string; message: string }>(
+      `/recipes/${id}/add-to-list`, { method: 'POST', body: JSON.stringify(data) }
+    );
+  }
+
+  // === Shopping List Groups ===
+  getShoppingGroups() {
+    return this.request<any[]>('/shopping-groups');
+  }
+  createShoppingGroup(data: { name: string; storeName?: string; storeAddress?: string; isDefault?: boolean }) {
+    return this.request<any>('/shopping-groups', { method: 'POST', body: JSON.stringify(data) });
+  }
+  updateShoppingGroup(id: string, data: Partial<{ name: string; storeName: string; storeAddress: string; isDefault: boolean }>) {
+    return this.request<any>(`/shopping-groups/${id}`, { method: 'PUT', body: JSON.stringify(data) });
+  }
+  deleteShoppingGroup(id: string) {
+    return this.request<{ success: boolean }>(`/shopping-groups/${id}`, { method: 'DELETE' });
+  }
+  getGroupItems(id: string) {
+    return this.request<any[]>(`/shopping-groups/${id}/items`);
+  }
+  moveItemToGroup(itemId: string, listGroupId: string | null) {
+    return this.request<any>(`/shopping-groups/items/${itemId}/move`, {
+      method: 'PUT', body: JSON.stringify({ listGroupId }),
+    });
+  }
+  getStoreRecommendations(zipCode: string, listGroupId?: string) {
+    const q = listGroupId ? `&listGroupId=${listGroupId}` : '';
+    return this.request<{ recommendations: any[]; itemCount: number }>(
+      `/shopping-groups/recommend-store?zipCode=${zipCode}${q}`
+    );
+  }
+
+  // === Reorder Suggestions ===
+  getReorderSuggestions() {
+    return this.request<any[]>('/shopping/reorder-suggestions');
+  }
+
+  // === Profile Avatar Upload ===
+  uploadProfileAvatar(profileId: string, file: File) {
+    const form = new FormData();
+    form.append('avatar', file);
+    return this.requestFormData<{ avatarUrl: string }>(`/profiles/${profileId}/avatar`, form);
+  }
+
+  // === Activity Log ===
+  getActivity(params?: { profileId?: string; entityType?: string; from?: string; to?: string; limit?: number }) {
+    const qs = new URLSearchParams();
+    if (params?.profileId) qs.set('profileId', params.profileId);
+    if (params?.entityType) qs.set('entityType', params.entityType);
+    if (params?.from) qs.set('from', params.from);
+    if (params?.to) qs.set('to', params.to);
+    if (params?.limit) qs.set('limit', String(params.limit));
+    const query = qs.toString();
+    return this.request<ActivityLogEntry[]>(`/activity${query ? `?${query}` : ''}`);
+  }
+
+  // === Household ===
+  getHousehold() {
+    return this.request<Household | null>('/household');
+  }
+  createHousehold(name?: string) {
+    return this.request<Household>('/household', { method: 'POST', body: JSON.stringify({ name }) });
+  }
+  inviteHouseholdMember(email: string, role: 'ADMIN' | 'MEMBER' = 'MEMBER') {
+    return this.request<HouseholdMember & { inviteUrl: string }>('/household/invite', { method: 'POST', body: JSON.stringify({ email, role }) });
+  }
+  removeHouseholdMember(memberId: string) {
+    return this.request(`/household/members/${memberId}`, { method: 'DELETE' });
+  }
+  updateMemberPermissions(memberId: string, permissions: Record<string, boolean>) {
+    return this.request(`/household/members/${memberId}/permissions`, { method: 'PATCH', body: JSON.stringify({ permissions }) });
+  }
+  acceptHouseholdInvite(token: string) {
+    return this.request<{ householdId: string }>('/household/accept', { method: 'POST', body: JSON.stringify({ token }) });
+  }
+  getHouseholdInvitePreview(token: string) {
+    return this.request<{ householdName: string; ownerName: string; inviteEmail: string; role: string; status: string }>(`/household/invite/preview?token=${encodeURIComponent(token)}`);
+  }
+  getMyHouseholdPermissions() {
+    return this.request<{ permissions: Record<string, boolean>; role: string; householdId: string } | null>('/household/permissions');
+  }
+
+  // ── Data Export (T58-T63) ──
+  requestDataExport(reason: string) {
+    return this.request<{ ok: boolean }>('/data-export/request', { method: 'POST', body: JSON.stringify({ reason }) });
+  }
+  verifyDataExportCode(code: string) {
+    return this.request<{ ok: boolean }>('/data-export/verify', { method: 'POST', body: JSON.stringify({ code }) });
+  }
+  getDataExportStatus() {
+    return this.request<DataExportStatus>('/data-export/status');
   }
 }
 

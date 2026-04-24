@@ -23,6 +23,12 @@ import macroRoutes from './routes/macros.js';
 import pushRoutes from './routes/push.js';
 import shareRoutes from './routes/share.js';
 import webhookRoutes from './routes/webhooks.js';
+import pantryRoutes from './routes/pantry.js';
+import recipeRoutes from './routes/recipes.js';
+import shoppingGroupRoutes from './routes/shoppingGroups.js';
+import activityRoutes from './routes/activity.js';
+import householdRoutes, { createPreviewRouter } from './routes/household.js';
+import dataExportRoutes from './routes/dataExport.js';
 import { type AuthRequest } from './middleware/auth.js';
 
 const app = express();
@@ -33,6 +39,23 @@ fs.mkdirSync(uploadsDir, { recursive: true });
 
 app.use(helmet({
   crossOriginResourcePolicy: { policy: 'cross-origin' },
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc: ["'self'"],
+      scriptSrc: ["'self'"],
+      styleSrc: ["'self'", "'unsafe-inline'"],
+      imgSrc: ["'self'", 'data:', 'blob:'],
+      connectSrc: ["'self'", env.FRONTEND_URL],
+      fontSrc: ["'self'"],
+      objectSrc: ["'none'"],
+      frameAncestors: ["'none'"],
+      upgradeInsecureRequests: env.NODE_ENV === 'production' ? [] : null,
+    },
+  },
+  hsts: env.NODE_ENV === 'production'
+    ? { maxAge: 31536000, includeSubDomains: true, preload: true }
+    : false,
+  referrerPolicy: { policy: 'strict-origin-when-cross-origin' },
 }));
 app.use(cors({
   origin: env.FRONTEND_URL,
@@ -74,6 +97,13 @@ app.use('/api/macros', macroRoutes);
 app.use('/api/push', pushRoutes);
 app.use('/api/share', shareRoutes);
 app.use('/api/webhooks', webhookRoutes);
+app.use('/api/pantry', pantryRoutes);
+app.use('/api/recipes', recipeRoutes);
+app.use('/api/shopping-groups', shoppingGroupRoutes);
+app.use('/api/activity', activityRoutes);
+app.use('/api/household', householdRoutes);
+app.use('/api/household', createPreviewRouter());
+app.use('/api/data-export', dataExportRoutes);
 
 app.use(errorHandler);
 

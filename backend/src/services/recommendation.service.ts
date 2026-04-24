@@ -1,6 +1,7 @@
 import prisma from '../config/database.js';
 import { AppError } from '../middleware/errorHandler.js';
 import * as aiService from './ai.service.js';
+import { validateAndFilterItems } from './allergenSafety.service.js';
 
 export async function getRecommendations(userId: string, profileId?: string) {
   const where: any = { userId };
@@ -32,6 +33,7 @@ export async function generateRecommendations(
         type: profile.type,
         petType: profile.petType || undefined,
         age: profile.age || undefined,
+        criticalAllergies: profile.criticalAllergies,
         allergies: profile.allergies,
         intolerances: profile.intolerances,
         dietaryRestrictions: profile.dietaryRestrictions,
@@ -42,8 +44,20 @@ export async function generateRecommendations(
       categories
     );
 
+    // Deterministic + AI second-pass allergen safety validation
+    const safeRecs = await validateAndFilterItems(
+      aiRecs.map((rec: any) => ({ ...rec, ingredients: rec.ingredients || [] })),
+      {
+        name: profile.name,
+        type: profile.type,
+        criticalAllergies: profile.criticalAllergies,
+        allergies: profile.allergies,
+        intolerances: profile.intolerances,
+      }
+    );
+
     const savedRecs = await prisma.recommendation.createManyAndReturn({
-      data: aiRecs.map((rec: any) => ({
+      data: safeRecs.map((rec: any) => ({
         userId,
         profileId: profile.id,
         itemName: rec.itemName,
@@ -55,6 +69,7 @@ export async function generateRecommendations(
         priceRange: rec.priceRange,
         nutrition: rec.nutrition,
         texture: rec.texture,
+        safetyFlag: rec.safetyFlag ?? null,
       })),
     });
 

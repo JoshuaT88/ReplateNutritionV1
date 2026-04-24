@@ -7,11 +7,12 @@ import { firstParam } from '../utils/http.js';
 const router = Router();
 router.use(authenticate);
 
-// GET /api/macros?date=YYYY-MM-DD  (defaults to today)
+// GET /api/macros?date=YYYY-MM-DD&profileId=xxx  (defaults to today)
 router.get('/', async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     const userId = req.user!.userId;
     const dateStr = firstParam(req.query.date as string) || new Date().toISOString().split('T')[0];
+    const profileId = firstParam(req.query.profileId as string) || undefined;
     const date = new Date(dateStr + 'T00:00:00.000Z');
     const nextDay = new Date(date);
     nextDay.setDate(nextDay.getDate() + 1);
@@ -19,6 +20,7 @@ router.get('/', async (req: AuthRequest, res: Response, next: NextFunction) => {
     const logs = await prisma.macroLog.findMany({
       where: {
         userId,
+        ...(profileId ? { profileId } : {}),
         date: { gte: date, lt: nextDay },
       },
       orderBy: { createdAt: 'asc' },
@@ -73,7 +75,7 @@ router.get('/summary', async (req: AuthRequest, res: Response, next: NextFunctio
 router.post('/', async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     const userId = req.user!.userId;
-    const { date, mealName, calories, protein, carbs, fat, fiber, notes } = req.body;
+    const { date, mealName, calories, protein, carbs, fat, fiber, notes, profileId } = req.body;
     if (!mealName) throw new AppError(400, 'mealName is required');
 
     const dateObj = date ? new Date(date + 'T00:00:00.000Z') : (() => {
@@ -83,6 +85,7 @@ router.post('/', async (req: AuthRequest, res: Response, next: NextFunction) => 
     const log = await prisma.macroLog.create({
       data: {
         userId,
+        profileId: profileId || null,
         date: dateObj,
         mealName,
         calories: calories != null ? parseInt(calories, 10) : null,

@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { motion } from 'framer-motion';
-import { Plus, Trash2, Loader2, Activity } from 'lucide-react';
+import { Plus, Trash2, Loader2, Activity, Download, User } from 'lucide-react';
 import { api } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -10,6 +10,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '
 import { useToast } from '@/components/ui/toast';
 import { fmtDate } from '@/lib/time';
 import { cn } from '@/lib/utils';
+import type { MealPlan } from '@/types';
 
 interface MacroFormState {
   mealName: string;
@@ -37,12 +38,22 @@ export default function MacroLogPage() {
   const queryClient = useQueryClient();
   const { toast } = useToast();
   const [selectedDate, setSelectedDate] = useState(() => new Date().toISOString().split('T')[0]);
+  const [selectedProfileId, setSelectedProfileId] = useState<string>('');
   const [showAdd, setShowAdd] = useState(false);
+  const [showImport, setShowImport] = useState(false);
+  const [importSearch, setImportSearch] = useState('');
   const [form, setForm] = useState<MacroFormState>(EMPTY_FORM);
 
+  const { data: profiles } = useQuery({
+    queryKey: ['profiles'],
+    queryFn: () => api.getProfiles(),
+  });
+
+  const humanProfiles = profiles?.filter((p) => p.type === 'HUMAN') ?? [];
+
   const { data, isLoading } = useQuery({
-    queryKey: ['macros', selectedDate],
-    queryFn: () => api.getMacros(selectedDate),
+    queryKey: ['macros', selectedDate, selectedProfileId],
+    queryFn: () => api.getMacros(selectedDate, selectedProfileId || undefined),
   });
 
   const logMutation = useMutation({
@@ -55,6 +66,7 @@ export default function MacroLogPage() {
       fat: form.fat ? parseFloat(form.fat) : undefined,
       fiber: form.fiber ? parseFloat(form.fiber) : undefined,
       notes: form.notes || undefined,
+      profileId: selectedProfileId || undefined,
     }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['macros'] });
@@ -72,6 +84,17 @@ export default function MacroLogPage() {
 
   const totals = data?.totals ?? { calories: 0, protein: 0, carbs: 0, fat: 0, fiber: 0 };
 
+  // T45: Meal plan import — fetch recent meals for the selected profile
+  const { data: mealPlanData } = useQuery({
+    queryKey: ['mealPlans', { profileId: selectedProfileId || undefined }],
+    queryFn: () => api.getMealPlans({ profileId: selectedProfileId || undefined }),
+    enabled: showImport,
+  });
+
+  const filteredMeals = (mealPlanData ?? []).filter((m: MealPlan) =>
+    !importSearch || m.mealName.toLowerCase().includes(importSearch.toLowerCase())
+  ).slice(0, 20);
+
   return (
     <div className="max-w-2xl mx-auto space-y-6">
       <div className="flex items-center justify-between flex-wrap gap-3">
@@ -81,13 +104,31 @@ export default function MacroLogPage() {
           </h1>
           <p className="text-sm text-muted mt-0.5">Track daily macros and calories</p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
+          {humanProfiles.length > 0 && (
+            <div className="flex items-center gap-1.5 bg-slate-100 rounded-xl px-3 py-1.5">
+              <User className="h-3.5 w-3.5 text-muted shrink-0" />
+              <select
+                value={selectedProfileId}
+                onChange={(e) => setSelectedProfileId(e.target.value)}
+                className="bg-transparent text-sm font-medium focus:outline-none"
+              >
+                <option value="">All profiles</option>
+                {humanProfiles.map((p) => (
+                  <option key={p.id} value={p.id}>{p.name}</option>
+                ))}
+              </select>
+            </div>
+          )}
           <Input
             type="date"
             value={selectedDate}
             onChange={(e) => setSelectedDate(e.target.value)}
             className="w-40"
           />
+          <Button variant="outline" onClick={() => setShowImport(true)}>
+            <Download className="h-4 w-4" /> Import
+          </Button>
           <Button onClick={() => setShowAdd(true)}>
             <Plus className="h-4 w-4" /> Log Meal
           </Button>
@@ -100,13 +141,13 @@ export default function MacroLogPage() {
           <p className="text-xs font-semibold uppercase tracking-wider text-muted mb-3">
             {fmtDate(new Date(selectedDate + 'T12:00:00'))} · Daily Totals
           </p>
-          <div className="grid grid-cols-5 gap-2">
+          <div className="grid grid-cols-5 gap-1 sm:gap-2">
             {(['calories', 'protein', 'carbs', 'fat', 'fiber'] as const).map((key) => (
-              <div key={key} className={cn('rounded-xl px-3 py-2 text-center', MACRO_COLORS[key])}>
-                <p className="text-lg font-bold">
+              <div key={key} className={cn('rounded-xl px-1.5 sm:px-3 py-2 text-center', MACRO_COLORS[key])}>
+                <p className="text-base sm:text-lg font-bold leading-tight">
                   {key === 'calories' ? Math.round(totals.calories) : (totals[key] ?? 0).toFixed(1)}
                 </p>
-                <p className="text-[10px] font-medium capitalize">{key === 'calories' ? 'kcal' : `${key} g`}</p>
+                <p className="text-[9px] sm:text-[10px] font-medium capitalize">{key === 'calories' ? 'kcal' : `${key}g`}</p>
               </div>
             ))}
           </div>
@@ -260,6 +301,52 @@ export default function MacroLogPage() {
             >
               {logMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Log Meal'}
             </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* T45: Import from Meal Plan dialog */}
+      <Dialog open={showImport} onOpenChange={(o) => { setShowImport(o); if (!o) setImportSearch(''); }}>
+        <DialogContent>
+          <DialogHeader><DialogTitle>Import from Meal Plan</DialogTitle></DialogHeader>
+          <div className="space-y-3">
+            <Input
+              placeholder="Search meals by name..."
+              value={importSearch}
+              onChange={(e) => setImportSearch(e.target.value)}
+              autoFocus
+            />
+            <div className="max-h-72 overflow-y-auto space-y-1.5">
+              {filteredMeals.length === 0 ? (
+                <p className="text-sm text-muted text-center py-6">No meals found</p>
+              ) : (
+                filteredMeals.map((meal: MealPlan) => (
+                  <button
+                    key={meal.id}
+                    onClick={() => {
+                      setForm({
+                        mealName: meal.mealName,
+                        calories: meal.calories ? String(meal.calories) : '',
+                        protein: '', carbs: '', fat: '', fiber: '',
+                        notes: meal.preparationNotes || '',
+                      });
+                      setShowImport(false);
+                      setShowAdd(true);
+                    }}
+                    className="w-full text-left px-3 py-2.5 rounded-xl border border-card-border hover:bg-slate-50 transition-colors"
+                  >
+                    <p className="text-sm font-medium">{meal.mealName}</p>
+                    <p className="text-xs text-muted capitalize">
+                      {meal.mealType.replace(/_/g, ' ')} · {new Date(meal.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                      {meal.calories ? ` · ${meal.calories} cal` : ''}
+                    </p>
+                  </button>
+                ))
+              )}
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowImport(false)}>Close</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

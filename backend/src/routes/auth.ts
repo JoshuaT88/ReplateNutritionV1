@@ -1,8 +1,18 @@
 import { Router, Request, Response, NextFunction } from 'express';
 import { z } from 'zod';
 import * as authService from '../services/auth.service.js';
+import { authRateLimiter } from '../middleware/rateLimiter.js';
 
 const router = Router();
+
+// 5 attempts per 15 minutes per IP+email for login
+const loginLimiter = authRateLimiter(5, 15 * 60_000);
+// 3 registrations per hour per IP
+const registerLimiter = authRateLimiter(3, 60 * 60_000);
+// 3 forgot-password requests per hour per IP+email
+const forgotLimiter = authRateLimiter(3, 60 * 60_000);
+// 5 reset attempts per 15 minutes per IP
+const resetLimiter = authRateLimiter(5, 15 * 60_000);
 
 const registerSchema = z.object({
   email: z.string().email(),
@@ -12,10 +22,10 @@ const registerSchema = z.object({
 
 const loginSchema = z.object({
   email: z.string().email(),
-  password: z.string().min(1),
+  password: z.string().min(8).max(128),
 });
 
-router.post('/register', async (req: Request, res: Response, next: NextFunction) => {
+router.post('/register', registerLimiter, async (req: Request, res: Response, next: NextFunction) => {
   try {
     const data = registerSchema.parse(req.body);
     const result = await authService.register(data.email, data.password, data.fullName);
@@ -23,7 +33,7 @@ router.post('/register', async (req: Request, res: Response, next: NextFunction)
   } catch (err) { next(err); }
 });
 
-router.post('/login', async (req: Request, res: Response, next: NextFunction) => {
+router.post('/login', loginLimiter, async (req: Request, res: Response, next: NextFunction) => {
   try {
     const data = loginSchema.parse(req.body);
     const result = await authService.login(data.email, data.password);
@@ -48,7 +58,7 @@ router.post('/logout', async (req: Request, res: Response, next: NextFunction) =
   } catch (err) { next(err); }
 });
 
-router.post('/forgot-password', async (req: Request, res: Response, next: NextFunction) => {
+router.post('/forgot-password', forgotLimiter, async (req: Request, res: Response, next: NextFunction) => {
   try {
     const { email } = req.body;
     await authService.forgotPassword(email);
@@ -56,7 +66,7 @@ router.post('/forgot-password', async (req: Request, res: Response, next: NextFu
   } catch (err) { next(err); }
 });
 
-router.post('/reset-password', async (req: Request, res: Response, next: NextFunction) => {
+router.post('/reset-password', resetLimiter, async (req: Request, res: Response, next: NextFunction) => {
   try {
     const { token, password } = req.body;
     await authService.resetPassword(token, password);

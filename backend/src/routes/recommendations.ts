@@ -2,6 +2,7 @@ import { Router, Response, NextFunction } from 'express';
 import { authenticate, AuthRequest } from '../middleware/auth.js';
 import * as recService from '../services/recommendation.service.js';
 import { firstParam } from '../utils/http.js';
+import { logActivity } from '../services/activity.service.js';
 
 const router = Router();
 router.use(authenticate);
@@ -26,6 +27,16 @@ router.put('/:id', async (req: AuthRequest, res: Response, next: NextFunction) =
   try {
     const recommendationId = firstParam(req.params.id);
     const rec = await recService.updateRecommendation(req.user!.userId, recommendationId!, req.body);
+    if (req.body.actedOn === true) {
+      logActivity({
+        userId: req.user!.userId,
+        profileId: rec.profileId ?? undefined,
+        entityType: 'recommendation',
+        entityId: recommendationId!,
+        action: 'acted_on',
+        metadata: { name: rec.itemName, category: rec.category },
+      }).catch(() => {});
+    }
     res.json(rec);
   } catch (err) { next(err); }
 });
