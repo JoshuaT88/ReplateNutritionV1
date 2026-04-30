@@ -1,4 +1,9 @@
 import { env } from '../config/env.js';
+import prisma from '../config/database.js';
+
+const PLACES_NEW_BASE = 'https://places.googleapis.com/v1/places';
+const GEOCODE_BASE = 'https://maps.googleapis.com/maps/api/geocode/json';
+const CACHE_TTL_DAYS = 7;
 
 interface PlaceResult {
   name: string;
@@ -10,41 +15,116 @@ interface PlaceResult {
   placeId: string;
 }
 
+function placesHeaders(fieldMask: string) {
+  return {
+    'Content-Type': 'application/json',
+    'X-Goog-Api-Key': env.GOOGLE_PLACES_API_KEY,
+    'X-Goog-FieldMask': fieldMask,
+  };
+}
+
+function cacheExpiry(): Date {
+  const d = new Date();
+  d.setDate(d.getDate() + CACHE_TTL_DAYS);
+  return d;
+}
+
+async function getFromCache<T>(key: string): Promise<T | null> {
+  const row = await prisma.storeCache.findUnique({ where: { cacheKey: key } });
+  if (!row) return null;
+  if (row.expiresAt < new Date()) {
+    await prisma.storeCache.delete({ where: { cacheKey: key } }).catch(() => {});
+    return null;
+  }
+  return row.results as T;
+}
+
+async function setCache(key: string, queryType: 'zip' | 'name', results: unknown): Promise<void> {
+  await prisma.storeCache.upsert({
+    where: { cacheKey: key },
+    create: { cacheKey: key, queryType, results: results as any, expiresAt: cacheExpiry() },
+    update: { results: results as any, expiresAt: cacheExpiry() },
+  }).catch(() => {}); // Fire-and-forget; don't block the response
+}
+
+async function geocodeZip(zipCode: string): Promise<{ lat: number; lng: number } | null> {
+  const res = await fetch(`${GEOCODE_BASE}?address=${encodeURIComponent(zipCode)}&key=${env.GOOGLE_PLACES_API_KEY}`);
+  const data = await res.json() as any;
+  if (data.status === 'REQUEST_DENIED' || data.error_message) {
+    throw new Error(`Geocoding API error: ${data.error_message || data.status}`);
+  }
+  if (!data.results?.length) return null;
+  return data.results[0].geometry.location as { lat: number; lng: number };
+}
+
 export async function searchNearbyStores(zipCode: string, radius: number = 16000): Promise<PlaceResult[]> {
-  // First, geocode the ZIP code
-  const geocodeUrl = `https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(zipCode)}&key=${env.GOOGLE_PLACES_API_KEY}`;
-  const geoRes = await fetch(geocodeUrl);
-  const geoData = await geoRes.json() as any;
+  if (!env.GOOGLE_PLACES_API_KEY) throw new Error('Google Places API key not configured');
 
-  if (!geoData.results?.length) return [];
-  const { lat, lng } = geoData.results[0].geometry.location;
+  const cacheKey = `zip:${zipCode.trim()}`;
+  const cached = await getFromCache<PlaceResult[]>(cacheKey);
+  if (cached) return cached;
 
-  // Search for grocery stores nearby
-  const placesUrl = `https://maps.googleapis.com/maps/api/place/nearbysearch/json?location=${lat},${lng}&radius=${radius}&type=supermarket&key=${env.GOOGLE_PLACES_API_KEY}`;
-  const placesRes = await fetch(placesUrl);
-  const placesData = await placesRes.json() as any;
+  const location = await geocodeZip(zipCode);
+  if (!location) return [];
 
-  if (!placesData.results?.length) return [];
+  const body = {
+    locationRestriction: {
+      circle: {
+        center: { latitude: location.lat, longitude: location.lng },
+        radius,
+      },
+    },
+    includedTypes: ['supermarket', 'grocery_store'],
+    maxResultCount: 10,
+  };
 
-  // Fetch details for all stores in parallel instead of sequential awaits
-  const detailPromises = placesData.results.slice(0, 10).map(async (place: any) => {
-    const detailUrl = `https://maps.googleapis.com/maps/api/place/details/json?place_id=${place.place_id}&fields=formatted_phone_number,opening_hours&key=${env.GOOGLE_PLACES_API_KEY}`;
-    const detailRes = await fetch(detailUrl);
-    const detailData = await detailRes.json() as any;
-
-    return {
-      name: place.name,
-      address: place.vicinity || place.formatted_address || '',
-      phone: detailData.result?.formatted_phone_number,
-      rating: place.rating,
-      hours: detailData.result?.opening_hours?.weekday_text,
-      location: place.geometry.location,
-      placeId: place.place_id,
-    } as PlaceResult;
+  const res = await fetch(`${PLACES_NEW_BASE}:searchNearby`, {
+    method: 'POST',
+    headers: placesHeaders('places.id,places.displayName,places.formattedAddress,places.location,places.nationalPhoneNumber,places.regularOpeningHours,places.rating'),
+    body: JSON.stringify(body),
   });
+  const data = await res.json() as any;
+  if (data.error) throw new Error(`Places API error: ${data.error.message}`);
+  if (!data.places?.length) return [];
 
-  const stores = await Promise.all(detailPromises);
-  return stores;
+  const results: PlaceResult[] = (data.places as any[]).map((p: any) => ({
+    name: p.displayName?.text ?? '',
+    address: p.formattedAddress ?? '',
+    phone: p.nationalPhoneNumber,
+    rating: p.rating,
+    hours: p.regularOpeningHours?.weekdayDescriptions,
+    location: { lat: p.location?.latitude ?? 0, lng: p.location?.longitude ?? 0 },
+    placeId: p.id ?? '',
+  }));
+
+  setCache(cacheKey, 'zip', results);
+  return results;
+}
+
+export async function searchStoresByName(query: string): Promise<{ name: string; address: string }[]> {
+  if (!env.GOOGLE_PLACES_API_KEY) throw new Error('Google Places API key not configured');
+
+  const cacheKey = `name:${query.trim().toLowerCase()}`;
+  const cached = await getFromCache<{ name: string; address: string }[]>(cacheKey);
+  if (cached) return cached;
+
+  const body = { textQuery: query };
+  const res = await fetch(`${PLACES_NEW_BASE}:searchText`, {
+    method: 'POST',
+    headers: placesHeaders('places.displayName,places.formattedAddress'),
+    body: JSON.stringify(body),
+  });
+  const data = await res.json() as any;
+  if (data.error) throw new Error(`Places API error: ${data.error.message}`);
+  if (!data.places?.length) return [];
+
+  const results = (data.places as any[]).slice(0, 8).map((p: any) => ({
+    name: p.displayName?.text as string ?? '',
+    address: (p.formattedAddress ?? '') as string,
+  }));
+
+  setCache(cacheKey, 'name', results);
+  return results;
 }
 
 export async function getStoreDistance(
@@ -54,6 +134,5 @@ export async function getStoreDistance(
   const distUrl = `https://maps.googleapis.com/maps/api/distancematrix/json?origins=${encodeURIComponent(originZip)}&destinations=place_id:${destinationPlaceId}&key=${env.GOOGLE_PLACES_API_KEY}`;
   const res = await fetch(distUrl);
   const data = await res.json() as any;
-
   return data.rows?.[0]?.elements?.[0]?.distance?.text || 'Unknown';
 }

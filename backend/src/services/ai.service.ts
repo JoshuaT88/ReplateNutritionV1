@@ -248,7 +248,11 @@ Return JSON:
       "mealName": "string",
       "ingredients": ["string"],
       "preparationNotes": "string",
-      "calories": number
+      "calories": number,
+      "protein": number,
+      "carbs": number,
+      "fat": number,
+      "fiber": number
     }
   ]
 }
@@ -425,13 +429,30 @@ Return JSON:
       },
     ],
     temperature: 0.3,
-    max_tokens: 4000,
+    max_tokens: 10000,
   }));
 
   const content = response.choices[0]?.message?.content;
   if (!content) throw new Error('No response from AI');
-  const parsed = JSON.parse(content);
-  return parsed.stores || [];
+  try {
+    const parsed = JSON.parse(content);
+    return parsed.stores || [];
+  } catch {
+    // JSON was cut off — extract partial store array and return what we have
+    try {
+      const match = content.match(/"stores"\s*:\s*(\[[\s\S]*)/);
+      if (!match) return [];
+      let partial = match[1];
+      // Close any unclosed structures
+      const openBraces = (partial.match(/\{/g) || []).length - (partial.match(/\}/g) || []).length;
+      const openBrackets = (partial.match(/\[/g) || []).length - (partial.match(/\]/g) || []).length;
+      partial = partial + '}'.repeat(Math.max(0, openBraces)) + ']'.repeat(Math.max(0, openBrackets));
+      const repaired = JSON.parse(partial);
+      return Array.isArray(repaired) ? repaired : [];
+    } catch {
+      return [];
+    }
+  }
 }
 
 /**
@@ -543,6 +564,146 @@ Return JSON:
   if (!content) throw new Error('No response from AI');
   const parsed = JSON.parse(content);
   return parsed.alternatives || [];
+}
+
+export async function generateCookingRecipe(
+  name: string,
+  ingredients: string[],
+  mealType: string,
+  servings: number = 2,
+): Promise<{ steps: string[]; prepTime: number; cookTime: number; tips: string[] }> {
+  const response = await withRetry(() =>
+    openai.chat.completions.create({
+      model: 'gpt-4o-mini',
+      response_format: { type: 'json_object' },
+      temperature: 0.4,
+      max_tokens: 1600,
+      messages: [
+        {
+          role: 'system',
+          content: `You are a professional recipe writer. Write clear, beginner-friendly step-by-step cooking instructions in plain English.
+- Each step is one specific action.
+- Include precise temperatures in both °F and °C.
+- Include exact timing for each step.
+- Use simple language suitable for any cooking skill level.
+- Cover: preparation, cooking, plating.`,
+        },
+        {
+          role: 'user',
+          content: `Write a complete step-by-step recipe for "${name}".
+Available ingredients: ${ingredients.join(', ')}
+Meal type: ${mealType}
+Servings: ${servings}
+
+Return ONLY valid JSON with this structure:
+{
+  "prepTime": <integer minutes for prep only>,
+  "cookTime": <integer minutes for cooking only>,
+  "steps": [
+    "Plain English step with specific time/temperature if needed",
+    "..."
+  ],
+  "tips": [
+    "Optional helpful tip (e.g. substitution, storage, make-ahead)",
+    "..."
+  ]
+}
+
+Write 7-12 steps. Tips are optional (0-3 max).`,
+        },
+      ],
+    })
+  );
+
+  const raw = response.choices[0]?.message?.content ?? '{}';
+  try {
+    const parsed = JSON.parse(raw);
+    return {
+      steps: Array.isArray(parsed.steps) ? parsed.steps.map((s: any) => String(s)) : [],
+      prepTime: typeof parsed.prepTime === 'number' ? Math.round(parsed.prepTime) : 10,
+      cookTime: typeof parsed.cookTime === 'number' ? Math.round(parsed.cookTime) : 20,
+      tips: Array.isArray(parsed.tips) ? parsed.tips.map((t: any) => String(t)) : [],
+    };
+  } catch {
+    return { steps: [], prepTime: 10, cookTime: 20, tips: [] };
+  }
+}
+
+export async function scanRecipeFromImage(
+  imageBase64: string,
+  mimeType: string
+): Promise<{
+  name: string | null;
+  mealType: string | null;
+  ingredients: string[];
+  preparationNotes: string | null;
+  servings: number | null;
+  prepTime: number | null;
+  calories: number | null;
+  tags: string[];
+}> {
+  const response = await withRetry(() =>
+    openai.chat.completions.create({
+      model: 'gpt-4o',
+      response_format: { type: 'json_object' },
+      max_tokens: 2000,
+      messages: [
+        {
+          role: 'system',
+          content: `You extract structured recipe data from images of written, printed, or handwritten recipes.
+Return ONLY valid JSON. If a field is not visible or not applicable, return null or an empty array.`,
+        },
+        {
+          role: 'user',
+          content: [
+            {
+              type: 'text',
+              text: `Extract all recipe information from this image.
+
+Return ONLY this JSON structure:
+{
+  "name": "string or null",
+  "mealType": "breakfast|lunch|dinner|snack|dessert or null",
+  "servings": integer or null,
+  "prepTime": integer minutes total (prep + cook) or null,
+  "calories": integer per serving or null,
+  "ingredients": ["list of ingredients with quantities, e.g. '2 cups flour'"],
+  "preparationNotes": "Full numbered step-by-step instructions exactly as written. Format each step on a new line starting with '1. ', '2. ', etc.",
+  "tags": ["any diet labels visible like vegan, gluten-free, dairy-free"],
+  "confidence": "high|medium|low — how clearly visible/readable the recipe is"
+}
+
+Rules:
+- Preserve exact ingredient quantities and units
+- Number every instruction step
+- If handwritten and hard to read, do your best and mark confidence as low`,
+            },
+            {
+              type: 'image_url',
+              image_url: { url: `data:${mimeType};base64,${imageBase64}` },
+            },
+          ],
+        },
+      ],
+    })
+  );
+
+  const raw = response.choices[0]?.message?.content ?? '{}';
+  try {
+    const parsed = JSON.parse(raw);
+    return {
+      name: typeof parsed.name === 'string' ? parsed.name.trim() : null,
+      mealType: typeof parsed.mealType === 'string' ? parsed.mealType.toLowerCase() : null,
+      ingredients: Array.isArray(parsed.ingredients) ? parsed.ingredients.map((i: any) => String(i)) : [],
+      preparationNotes: typeof parsed.preparationNotes === 'string' ? parsed.preparationNotes.trim() : null,
+      servings: typeof parsed.servings === 'number' ? Math.round(parsed.servings) : null,
+      prepTime: typeof parsed.prepTime === 'number' ? Math.round(parsed.prepTime) : null,
+      calories: typeof parsed.calories === 'number' ? Math.round(parsed.calories) : null,
+      tags: Array.isArray(parsed.tags) ? parsed.tags.map((t: any) => String(t)) : [],
+    };
+  } catch {
+    return { name: null, mealType: null, ingredients: [], preparationNotes: null, servings: null, prepTime: null, calories: null, tags: [] };
+  }
 }
 
 export interface ReceiptLineItem {

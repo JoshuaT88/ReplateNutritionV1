@@ -1,5 +1,5 @@
 import cron from 'node-cron';
-import { aggregatePrices } from '../services/pricing.service.js';
+import { aggregatePrices, purgeExpiredPriceCache } from '../services/pricing.service.js';
 import prisma from '../config/database.js';
 import { emailNotificationsConfigured, sendPriceDropEmail } from '../services/notification.service.js';
 
@@ -109,6 +109,10 @@ export function startPriceAggregationJob() {
       if (result.priceDrops.length > 0) {
         await notifyPriceDrops(result.priceDrops);
       }
+
+      // Purge stale price cache entries
+      const { count } = await purgeExpiredPriceCache();
+      if (count > 0) console.log(`[CRON] Purged ${count} expired price cache entries.`);
     } catch (err) {
       console.error('[CRON] Price aggregation failed:', err);
     }

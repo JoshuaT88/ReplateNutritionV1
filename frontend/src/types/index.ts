@@ -50,6 +50,17 @@ export interface DataExportStatus {
   dataExportRequestedAt: string | null;
 }
 
+// ============ Store Corrections ============
+export interface StoreCorrection {
+  id: string;
+  storeName: string;
+  currentAddress: string;
+  correction: string;
+  notes: string | null;
+  status: string;
+  createdAt: string;
+}
+
 // ============ Profiles ============
 export type ProfileType = 'HUMAN' | 'PET';
 
@@ -133,6 +144,10 @@ export interface MealPlan {
   ingredients: string[];
   preparationNotes: string | null;
   calories: number | null;
+  protein: number | null;
+  carbs: number | null;
+  fat: number | null;
+  fiber: number | null;
   servings: number | null;
   prepTime: number | null;
   completed: boolean;
@@ -148,9 +163,15 @@ export interface CustomMeal {
   ingredients: string[];
   preparationNotes: string | null;
   calories: number | null;
+  protein: number | null;
+  carbs: number | null;
+  fat: number | null;
+  fiber: number | null;
   servings: number | null;
   prepTime: number | null;
   tags: string[];
+  photoUrl: string | null;
+  ingredientScaling: Record<string, 'proportional' | 'moderate' | 'fixed'> | null;
   createdAt: string;
   updatedAt: string;
 }

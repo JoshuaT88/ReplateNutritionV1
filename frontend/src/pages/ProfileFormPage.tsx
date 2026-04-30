@@ -129,7 +129,7 @@ export default function ProfileFormPage() {
       </button>
 
       <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }}>
-        <h1 className="text-2xl font-semibold mb-6">{isEditing ? 'Edit Profile' : 'New Profile'}</h1>
+        <h1 className="text-2xl font-semibold mb-6">{isEditing ? 'Edit Nutrition Profile' : 'New Nutrition Profile'}</h1>
 
         <form onSubmit={handleSubmit}>
           <Tabs defaultValue="identity">
@@ -139,7 +139,7 @@ export default function ProfileFormPage() {
               <TabsTrigger value="conditions" className="gap-1.5"><ShieldAlert className="h-3.5 w-3.5" /> Conditions</TabsTrigger>
             </TabsList>
             <TabsContent value="identity">
-              <div className="bg-white rounded-2xl border border-card-border p-6 space-y-4">
+              <div className="bg-white dark:bg-[#1F2937] dark:border-[#374151] rounded-2xl border border-card-border p-6 space-y-4">
                 {/* Avatar upload */}
                 {isEditing && (
                   <div className="flex items-center gap-4">
@@ -185,7 +185,7 @@ export default function ProfileFormPage() {
                     {(['HUMAN', 'PET'] as ProfileType[]).map((t) => (
                       <button key={t} type="button" onClick={() => update({ type: t })}
                         className={cn('flex-1 py-2.5 rounded-xl border-2 text-sm font-medium transition-all',
-                          form.type === t ? 'border-primary bg-primary/5 text-primary' : 'border-card-border text-muted hover:border-slate-300'
+                          form.type === t ? 'border-primary bg-primary/5 text-primary' : 'border-card-border dark:border-[#374151] text-muted hover:border-slate-300 dark:hover:border-[#4B5563]'
                         )}>
                         {t === 'HUMAN' ? '🧑 Human' : '🐾 Pet'}
                       </button>
@@ -215,7 +215,7 @@ export default function ProfileFormPage() {
                             className={cn('flex-1 py-2 rounded-xl border-2 text-sm font-medium transition-all',
                               form.dietType === dt
                                 ? 'border-primary bg-primary/5 text-primary'
-                                : 'border-card-border text-muted hover:border-slate-300'
+                                : 'border-card-border dark:border-[#374151] text-muted hover:border-slate-300 dark:hover:border-[#4B5563]'
                             )}
                           >
                             {dt === 'Kibble' ? '🥣' : dt === 'Raw/Fresh' ? '🥩' : '🍽️'} {dt}
@@ -223,7 +223,7 @@ export default function ProfileFormPage() {
                         ))}
                       </div>
                     </div>
-                    <div className="rounded-xl border border-card-border p-4 space-y-3">
+                    <div className="rounded-xl border border-card-border dark:border-[#374151] p-4 space-y-3">
                       <div className="flex items-center gap-2 mb-1">
                         <PawPrint className="h-4 w-4 text-primary" />
                         <Label className="text-sm font-semibold">Feeding Schedule</Label>
@@ -297,14 +297,14 @@ export default function ProfileFormPage() {
             </TabsContent>
 
             <TabsContent value="dietary">
-              <div className="bg-white rounded-2xl border border-card-border p-6 space-y-5">
+              <div className="bg-white dark:bg-[#1F2937] dark:border-[#374151] rounded-2xl border border-card-border p-6 space-y-5">
                 {/* Critical Allergens — highest prominence */}
-                <div className="rounded-xl border-2 border-red-300 bg-red-50 p-4">
+                <div className="rounded-xl border-2 border-red-300 bg-red-50 dark:bg-red-950/40 dark:border-red-800 p-4">
                   <div className="flex items-start gap-2 mb-3">
                     <AlertTriangle className="h-5 w-5 text-red-600 mt-0.5 flex-shrink-0" />
                     <div>
-                      <Label className="text-red-700 font-semibold text-sm">Life-Threatening / Critical Allergens</Label>
-                      <p className="text-xs text-red-600 mt-0.5">
+                      <Label className="text-red-700 dark:text-red-400 font-semibold text-sm">Life-Threatening / Critical Allergens</Label>
+                      <p className="text-xs text-red-600 dark:text-red-400 mt-0.5">
                         These trigger maximum safety checks. Items containing these allergens will be <strong>completely blocked</strong> from all recommendations, meal plans, and recipes for this profile.
                       </p>
                     </div>
@@ -342,7 +342,7 @@ export default function ProfileFormPage() {
             </TabsContent>
 
             <TabsContent value="conditions">
-              <div className="bg-white rounded-2xl border border-card-border p-6 space-y-5">
+              <div className="bg-white dark:bg-[#1F2937] dark:border-[#374151] rounded-2xl border border-card-border p-6 space-y-5">
                 <div>
                   <Label className="mb-2 block">Special Conditions</Label>
                   <TagInput
@@ -397,13 +397,13 @@ function BreedAutocomplete({ value, onChange, petType }: { value: string; onChan
         placeholder="e.g. Labrador Retriever"
       />
       {open && filtered.length > 0 && query.length > 0 && (
-        <div className="absolute z-10 top-full left-0 right-0 bg-white border border-card-border rounded-xl shadow-lg mt-1 overflow-hidden">
+        <div className="absolute z-10 top-full left-0 right-0 bg-white dark:bg-[#1F2937] border border-card-border dark:border-[#374151] rounded-xl shadow-lg mt-1 overflow-hidden">
           {filtered.map((breed) => (
             <button
               key={breed}
               type="button"
               onMouseDown={() => { onChange(breed); setQuery(breed); setOpen(false); }}
-              className="w-full text-left px-3 py-2 text-sm hover:bg-slate-50 transition-colors"
+              className="w-full text-left px-3 py-2 text-sm hover:bg-slate-50 dark:hover:bg-[#283447] transition-colors"
             >
               {breed}
             </button>

@@ -17,11 +17,12 @@ interface AuthContextValue {
 
 const AuthContext = createContext<AuthContextValue | null>(null);
 
-function applyTheme(theme: string) {
+export function applyTheme(theme: string) {
   const root = document.documentElement;
   const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
   const isDark = theme === 'dark' || (theme === 'system' && prefersDark);
   root.classList.toggle('dark', isDark);
+  try { localStorage.setItem('theme', theme); } catch { /* ignore */ }
 }
 
 export function AuthProvider({ children }: { children: ReactNode }) {
@@ -64,6 +65,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     api.setTokens(res.accessToken, res.refreshToken);
     queryClient.clear(); // Clear all cached data from previous user
     const prefs = await api.getPreferences();
+    applyTheme(prefs?.theme ?? 'light');
     startTransition(() => {
       setUser(res.user);
       setPreferences(prefs);
@@ -75,6 +77,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     api.setTokens(res.accessToken, res.refreshToken);
     queryClient.clear(); // Clear all cached data
     const prefs = await api.getPreferences();
+    applyTheme(prefs?.theme ?? 'light');
     startTransition(() => {
       setUser(res.user);
       setPreferences(prefs);

@@ -1,10 +1,11 @@
 import { Router, Response, NextFunction } from 'express';
 import { authenticate, AuthRequest } from '../middleware/auth.js';
 import * as shoppingService from '../services/shopping.service.js';
-import { searchNearbyStores } from '../services/store.service.js';
+import { searchNearbyStores, searchStoresByName } from '../services/store.service.js';
 import { firstParam } from '../utils/http.js';
 import prisma from '../config/database.js';
 import { logActivity } from '../services/activity.service.js';
+import { isKrogerStore, findKrogerLocationId, searchKrogerProducts } from '../services/kroger.service.js';
 
 const router = Router();
 router.use(authenticate);
@@ -140,7 +141,7 @@ router.post('/session/:sessionId/cancel', async (req: AuthRequest, res: Response
 router.post('/session/:sessionId/add-item', async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     const sessionId = firstParam(req.params.sessionId);
-    const { itemName, quantity, category, notes } = req.body;
+    const { itemName, quantity, category, notes, dealNote } = req.body;
     if (!itemName?.trim()) {
       res.status(400).json({ error: 'itemName is required' }); return;
     }
@@ -150,6 +151,7 @@ router.post('/session/:sessionId/add-item', async (req: AuthRequest, res: Respon
       quantity: quantity || null,
       category: category || null,
       notes: notes || null,
+      dealNote: dealNote || null,
       priority: 'MEDIUM',
     });
     res.status(201).json(item);
@@ -219,4 +221,55 @@ router.get('/stores', async (req: AuthRequest, res: Response, next: NextFunction
   } catch (err) { next(err); }
 });
 
+// T70: Kroger live product search — GET /api/shopping/kroger-products?storeName=X&zipCode=Y&itemName=Z
+router.get('/kroger-products', async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const storeName = firstParam(req.query.storeName as string | string[] | undefined) || '';
+    const zipCode = firstParam(req.query.zipCode as string | string[] | undefined) || '';
+    const itemName = firstParam(req.query.itemName as string | string[] | undefined) || '';
+
+    if (!isKrogerStore(storeName)) {
+      return res.json({ supported: false, reason: 'not_kroger' });
+    }
+    if (!zipCode || !itemName) {
+      return res.json({ supported: true, products: [] });
+    }
+
+    const locationId = await findKrogerLocationId(zipCode);
+    if (!locationId) {
+      return res.json({ supported: true, locationId: null, products: [] });
+    }
+
+    const products = await searchKrogerProducts(itemName, locationId);
+    res.json({ supported: true, locationId, products });
+  } catch (err) { next(err); }
+});
+
+// T71: Check if store name is a Kroger-family banner — GET /api/shopping/kroger-check?storeName=X
+router.get('/kroger-check', async (req: AuthRequest, res: Response) => {
+  const storeName = firstParam(req.query.storeName as string | string[] | undefined) || '';
+  res.json({ isKroger: isKrogerStore(storeName) });
+});
+
+// Bug 7: Search stores by name (for preferred stores in Settings) — GET /api/shopping/search-stores?q=Walmart
+router.get('/search-stores', async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const q = firstParam(req.query.q as string | string[] | undefined) || '';
+    if (!q.trim()) { res.json([]); return; }
+    const results = await searchStoresByName(q.trim());
+    res.json(results ?? []);
+  } catch (err) { next(err); }
+});
+
+// GET /api/shopping/stores-by-zip?zip=... — nearby stores by ZIP, no shopping list required
+router.get('/stores-by-zip', async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const zip = firstParam(req.query.zip as string | string[] | undefined) || '';
+    if (!/^\d{5}$/.test(zip)) { res.json([]); return; }
+    const stores = await searchNearbyStores(zip);
+    res.json((stores ?? []).map((s) => ({ name: s.name, address: s.address })));
+  } catch (err) { next(err); }
+});
+
 export default router;
+

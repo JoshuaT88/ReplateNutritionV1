@@ -226,7 +226,7 @@ export default function ProfileDetailPage() {
                     {completed.slice(0, 30).map((meal) => (
                       <Card key={meal.id}>
                         <CardContent className="p-4 flex items-center gap-3">
-                          <div className="w-6 h-6 rounded-lg bg-green-100 flex items-center justify-center shrink-0">
+                          <div className="w-6 h-6 rounded-lg bg-green-100 dark:bg-green-900/30 flex items-center justify-center shrink-0">
                             <Check className="h-3.5 w-3.5 text-green-600" />
                           </div>
                           <div className="flex-1 min-w-0">

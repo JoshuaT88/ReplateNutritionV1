@@ -197,6 +197,33 @@ class ApiClient {
       method: 'POST', body: JSON.stringify({ profileIds, date, mealTypes, days, dietaryGoals }),
     });
   }
+  // T67: SSE streaming meal plan generation
+  async *generateMealPlanStream(profileIds: string[], date: string, mealTypes: string[], days: number = 7, dietaryGoals?: string): AsyncGenerator<{ meal?: MealPlan; done: boolean; error?: string; total?: number }> {
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (this.accessToken) headers['Authorization'] = `Bearer ${this.accessToken}`;
+    const res = await fetch(`${API_BASE}/meal-plan/generate-stream`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ profileIds, date, mealTypes, days, dietaryGoals }),
+    });
+    if (!res.ok || !res.body) throw new Error('Stream failed');
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const parts = buffer.split('\n\n');
+      buffer = parts.pop() ?? '';
+      for (const part of parts) {
+        const line = part.trim();
+        if (line.startsWith('data: ')) {
+          try { yield JSON.parse(line.slice(6)); } catch { /* skip malformed */ }
+        }
+      }
+    }
+  }
   updateMealPlan(id: string, data: Partial<MealPlan>) {
     return this.request<MealPlan>(`/meal-plan/${id}`, { method: 'PUT', body: JSON.stringify(data) });
   }
@@ -211,7 +238,7 @@ class ApiClient {
   getCustomMeals() {
     return this.request<CustomMeal[]>('/meal-plan/custom-meals');
   }
-  createCustomMeal(data: Partial<CustomMeal>) {
+  createCustomMeal(data: Partial<CustomMeal> & { skipDuplicateCheck?: boolean }) {
     return this.request<CustomMeal>('/meal-plan/custom-meals', { method: 'POST', body: JSON.stringify(data) });
   }
   updateCustomMeal(id: string, data: Partial<CustomMeal>) {
@@ -219,6 +246,27 @@ class ApiClient {
   }
   deleteCustomMeal(id: string) {
     return this.request(`/meal-plan/custom-meals/${id}`, { method: 'DELETE' });
+  }
+  syncMealsToLibrary(meals: Array<{ name: string; mealType: string; ingredients: string[]; preparationNotes?: string | null; calories?: number | null; protein?: number | null; carbs?: number | null; fat?: number | null; fiber?: number | null; servings?: number | null }>) {
+    return this.request<{ synced: number; skipped: number }>('/meal-plan/custom-meals/sync-from-plan', {
+      method: 'POST',
+      body: JSON.stringify({ meals }),
+    });
+  }
+  annotateIngredientScaling(id: string) {
+    return this.request<{ ingredientScaling: Record<string, 'proportional' | 'moderate' | 'fixed'> }>(`/meal-plan/custom-meals/${id}/annotate-scaling`, { method: 'POST' });
+  }
+  estimateMealCalories(ingredients: string[], servings: number) {
+    return this.request<{ calories: number | null }>('/meal-plan/estimate-calories', {
+      method: 'POST',
+      body: JSON.stringify({ ingredients, servings }),
+    });
+  }
+  estimateMealMacros(mealName: string) {
+    return this.request<{ calories: number | null; protein: number | null; carbs: number | null; fat: number | null; fiber: number | null }>('/meal-plan/estimate-macros', {
+      method: 'POST',
+      body: JSON.stringify({ mealName }),
+    });
   }
 
   // === Shopping ===
@@ -243,6 +291,10 @@ class ApiClient {
     return this.request<StoreResult[]>('/shopping/find-stores', {
       method: 'POST', body: JSON.stringify({ zipCode }),
     });
+  }  findStoresByZip(zip: string) {
+    return this.request<{ name: string; address: string }[]>(`/shopping/stores-by-zip?zip=${encodeURIComponent(zip)}`);
+  }  searchPreferredStores(q: string) {
+    return this.request<{ name: string; address: string }[]>(`/shopping/search-stores?q=${encodeURIComponent(q)}`);
   }
 
   // === Shopping Sessions ===
@@ -284,7 +336,7 @@ class ApiClient {
   addRecommendationToList(data: { itemName: string; category?: string; ingredients?: string[]; priority?: string; notes?: string }) {
     return this.request<ShoppingItem>('/shopping/list', { method: 'POST', body: JSON.stringify(data) });
   }
-  addIngredientsToList(data: { ingredients: string[]; mealName: string; mealDate?: string; profileId?: string; category?: string }) {
+  addIngredientsToList(data: { ingredients: string[]; mealName: string; mealDate?: string; profileId?: string; category?: string; servings?: number }) {
     return this.request<ShoppingItem[]>('/shopping/add-ingredients', { method: 'POST', body: JSON.stringify(data) });
   }
 
@@ -384,6 +436,17 @@ class ApiClient {
   submitPrice(data: { itemName: string; storeName: string; zipRegion: string; actualPrice: number }) {
     return this.request('/pricing/submit', { method: 'POST', body: JSON.stringify(data) });
   }
+  getPriceEstimate(itemName: string, storeName?: string, zipRegion?: string) {
+    const params = new URLSearchParams({ itemName });
+    if (storeName) params.set('storeName', storeName);
+    if (zipRegion) params.set('zipRegion', zipRegion);
+    return this.request<{ estimatedPrice: number | null; source?: string }>(`/pricing/estimate?${params}`);
+  }
+  predictAisleLocation(itemName: string, storeName: string, zipRegion?: string) {
+    return this.request<{ aisle: string | null; source?: string }>('/aisles/predict', {
+      method: 'POST', body: JSON.stringify({ itemName, storeName, zipRegion: zipRegion ?? '' }),
+    });
+  }
 
   // === Support ===
   reportIssue(data: { description: string; workflow?: string; route?: string; metadata?: Record<string, unknown> }) {
@@ -450,6 +513,15 @@ class ApiClient {
   getKrogerStores(zipCode: string) {
     return this.request<any[]>(`/aisles/kroger-stores?zipCode=${zipCode}`);
   }
+  // T70: Live Kroger product search
+  getKrogerProducts(storeName: string, zipCode: string, itemName: string) {
+    return this.request<{
+      supported: boolean;
+      reason?: string;
+      locationId?: string | null;
+      products?: Array<{ productId: string; name: string; brand: string; aisleLocation: string | null; upc: string }>;
+    }>(`/shopping/kroger-products?storeName=${encodeURIComponent(storeName)}&zipCode=${encodeURIComponent(zipCode)}&itemName=${encodeURIComponent(itemName)}`);
+  }
 
   // === Session add-item ===
   addItemToSession(sessionId: string, data: { itemName: string; quantity?: string; category?: string; notes?: string }) {
@@ -462,6 +534,16 @@ class ApiClient {
   changePassword(currentPassword: string, newPassword: string) {
     return this.request('/users/me/password', {
       method: 'PUT', body: JSON.stringify({ currentPassword, newPassword }),
+    });
+  }
+  requestEmailChange(newEmail: string) {
+    return this.request<{ sent: boolean }>('/users/me/change-email-request', {
+      method: 'POST', body: JSON.stringify({ newEmail }),
+    });
+  }
+  confirmEmailChange(code: string) {
+    return this.request<{ success: boolean; email: string }>('/users/me/change-email-confirm', {
+      method: 'POST', body: JSON.stringify({ code }),
     });
   }
   exportData() {
@@ -516,6 +598,36 @@ class ApiClient {
   }
   getRecipe(id: string) {
     return this.request<any>(`/recipes/${id}`);
+  }
+  generateRecipeInstructions(data: { name: string; ingredients: string[]; mealType?: string; servings?: number }) {
+    return this.request<{ steps: string[]; prepTime: number; cookTime: number; tips: string[] }>(
+      '/recipes/generate-instructions', { method: 'POST', body: JSON.stringify(data) }
+    );
+  }
+  uploadRecipePhoto(mealId: string, file: File) {
+    const form = new FormData();
+    form.append('photo', file);
+    form.append('mealId', mealId);
+    return this.requestFormData<{ photoUrl: string }>('/recipes/photo-upload', form);
+  }
+  uploadRecipePhotoOnly(file: File) {
+    const form = new FormData();
+    form.append('photo', file);
+    return this.requestFormData<{ photoUrl: string }>('/recipes/photo-upload', form);
+  }
+  scanRecipeFromPhoto(file: File) {
+    const form = new FormData();
+    form.append('photo', file);
+    return this.requestFormData<{
+      name: string | null; mealType: string | null; ingredients: string[];
+      preparationNotes: string | null; servings: number | null;
+      prepTime: number | null; calories: number | null; tags: string[];
+    }>('/recipes/scan', form);
+  }
+  checkRecipeDuplicate(name: string) {
+    return this.request<{ isDuplicate: boolean; existing: { id: string; name: string; mealType: string; createdAt: string } | null }>(
+      '/recipes/check-duplicate', { method: 'POST', body: JSON.stringify({ name }) }
+    );
   }
   addRecipeToList(id: string, data: { servings?: number; listGroupId?: string }) {
     return this.request<{ added: number; recipeName: string; message: string }>(
@@ -610,6 +722,40 @@ class ApiClient {
   }
   getDataExportStatus() {
     return this.request<DataExportStatus>('/data-export/status');
+  }
+  reportStoreAddress(storeName: string, currentAddress: string, correction: string, notes?: string) {
+    return this.request<{ ok: boolean; id: string }>('/store-corrections', {
+      method: 'POST',
+      body: JSON.stringify({ storeName, currentAddress, correction, notes }),
+    });
+  }
+
+  // === Notifications ===
+  getNotifications(unreadOnly = false) {
+    return this.request<{ notifications: any[]; unreadCount: number }>(`/notifications${unreadOnly ? '?unreadOnly=true' : ''}`);
+  }
+  getNotificationCount() {
+    return this.request<{ count: number }>('/notifications/count');
+  }
+  markNotificationsRead(ids: string[]) {
+    return this.request('/notifications/read', { method: 'PATCH', body: JSON.stringify({ ids }) });
+  }
+  markAllNotificationsRead() {
+    return this.request('/notifications/read-all', { method: 'PATCH' });
+  }
+
+  // === Family Suggestions ===
+  getSuggestions() {
+    return this.request<any[]>('/suggestions');
+  }
+  getMySuggestions() {
+    return this.request<any[]>('/suggestions/mine');
+  }
+  createSuggestion(type: 'meal' | 'shopping_item', title: string, details?: string) {
+    return this.request<any>('/suggestions', { method: 'POST', body: JSON.stringify({ type, title, details }) });
+  }
+  reviewSuggestion(id: string, status: 'APPROVED' | 'DENIED', adminNotes?: string) {
+    return this.request<any>(`/suggestions/${id}`, { method: 'PATCH', body: JSON.stringify({ status, adminNotes }) });
   }
 }
 

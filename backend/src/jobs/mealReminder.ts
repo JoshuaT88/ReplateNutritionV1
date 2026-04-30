@@ -2,6 +2,7 @@ import cron from 'node-cron';
 import prisma from '../config/database.js';
 import { env } from '../config/env.js';
 import { emailNotificationsConfigured, sendMealReminderEmail } from '../services/notification.service.js';
+import { sendPushToUser } from '../services/push.service.js';
 
 export function startMealReminderJob() {
   const schedule = env.MEAL_REMINDER_CRON;
@@ -81,6 +82,22 @@ export function startMealReminderJob() {
         );
 
         sentCount++;
+      }
+
+      // Also fire push notifications for users who have push subscriptions
+      const allRecipientIds = recipients.map((p) => p.userId);
+      for (const userId of allRecipientIds) {
+        const meals = await prisma.mealPlan.findMany({
+          where: { userId, date: { gte: startOfDay, lte: endOfDay } },
+          orderBy: [{ date: 'asc' }, { mealType: 'asc' }],
+        });
+        if (!meals.length) continue;
+        const mealNames = meals.slice(0, 3).map((m) => m.mealName).join(', ');
+        await sendPushToUser(userId, {
+          title: "Today's meals are planned",
+          body: mealNames + (meals.length > 3 ? ` +${meals.length - 3} more` : ''),
+          data: { type: 'meal_reminder', url: '/meal-plan' },
+        }).catch((err) => console.error('[Push] Meal reminder failed for', userId, err));
       }
 
       console.log(`[CRON] Meal reminder job complete. Sent ${sentCount} email(s).`);

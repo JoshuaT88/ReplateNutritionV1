@@ -17,6 +17,8 @@ import { useToast } from '@/components/ui/toast';
 import { ReportIssueButton } from '@/components/shared/ReportIssueModal';
 import { fmtDuration } from '@/lib/time';
 import { cn, formatCurrency } from '@/lib/utils';
+import { getTaxRate, formatTaxRate } from '@/lib/stateTaxRates';
+import { useAuth } from '@/contexts/AuthContext';
 
 type ItemStatus = 'PENDING' | 'PICKED_UP' | 'OUT_OF_STOCK' | 'SKIPPED' | 'TOO_EXPENSIVE';
 type ViewMode = 'list' | 'checklist' | 'cards';
@@ -42,10 +44,14 @@ export default function ShoppingSessionPage() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { toast } = useToast();
+  const { preferences } = useAuth();
+  const userState = (preferences as any)?.state as string | undefined;
+  const taxRate = getTaxRate(userState);
   const [viewMode, setViewMode] = useState<ViewMode>('list');
-  const [markingItem, setMarkingItem] = useState<{ id: string; name: string; aisleHint?: string } | null>(null);
+  const [markingItem, setMarkingItem] = useState<{ id: string; name: string; aisleHint?: string; dealNote?: string } | null>(null);
   const [markPrice, setMarkPrice] = useState('');
   const [markAisle, setMarkAisle] = useState('');
+  const [markDealNote, setMarkDealNote] = useState('');
   const [showEndConfirm, setShowEndConfirm] = useState(false);
   const [showCancelConfirm, setShowCancelConfirm] = useState(false);
   const [showReview, setShowReview] = useState(false);
@@ -70,7 +76,21 @@ export default function ShoppingSessionPage() {
   const updateStatusMutation = useMutation({
     mutationFn: ({ itemId, status }: { itemId: string; status: ItemStatus }) =>
       api.updateSessionItem(sessionId!, itemId, { status }),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['shoppingSession', sessionId] }),
+    onMutate: async ({ itemId, status }) => {
+      await queryClient.cancelQueries({ queryKey: ['shoppingSession', sessionId] });
+      const previous = queryClient.getQueryData(['shoppingSession', sessionId]);
+      queryClient.setQueryData(['shoppingSession', sessionId], (old: any) => {
+        if (!old) return old;
+        const statuses = { ...(old.itemStatuses || {}) };
+        statuses[itemId] = status;
+        return { ...old, itemStatuses: statuses };
+      });
+      return { previous };
+    },
+    onError: (_err, _vars, ctx) => {
+      queryClient.setQueryData(['shoppingSession', sessionId], ctx?.previous);
+    },
+    onSettled: () => queryClient.invalidateQueries({ queryKey: ['shoppingSession', sessionId] }),
   });
 
   const submitPriceMutation = useMutation({
@@ -151,9 +171,10 @@ export default function ShoppingSessionPage() {
 
   const handlePickUp = (item: any) => {
     updateStatusMutation.mutate({ itemId: item.id, status: 'PICKED_UP' });
-    setMarkingItem({ id: item.id, name: item.itemName, aisleHint: item.aisleHint });
+    setMarkingItem({ id: item.id, name: item.itemName, aisleHint: item.aisleHint, dealNote: item.dealNote });
     setMarkPrice('');
     setMarkAisle(item.aisleHint && item.aisleHint !== 'Unknown' ? item.aisleHint : '');
+    setMarkDealNote(item.dealNote || '');
   };
 
   const handleMarkSubmit = () => {
@@ -165,7 +186,12 @@ export default function ShoppingSessionPage() {
     if (markAisle.trim() && markAisle.trim() !== markingItem.aisleHint) {
       submitAisleMutation.mutate({ itemId: markingItem.id, aisle: markAisle.trim() });
     }
+    // Save deal note update back to shopping list item
+    if (markDealNote.trim() !== (markingItem.dealNote || '')) {
+      api.updateShoppingItem(markingItem.id, { dealNote: markDealNote.trim() || null }).catch(() => {});
+    }
     setMarkingItem(null);
+    setMarkDealNote('');
   };
 
   if (isLoading) {
@@ -191,6 +217,7 @@ export default function ShoppingSessionPage() {
             {session?.storeName && (
               <span className="flex items-center gap-1 text-muted">
                 <MapPin className="h-3.5 w-3.5" /> {session.storeName}
+                {session?.storeAddress && <span className="text-muted/70 hidden sm:inline">· {session.storeAddress}</span>}
               </span>
             )}
             <button
@@ -218,7 +245,14 @@ export default function ShoppingSessionPage() {
         <div className="space-y-1.5">
           <div className="flex items-center justify-between text-xs text-muted">
             <span>{pickedUp.length} of {items.length} items</span>
-            <span className="font-semibold text-foreground">{formatCurrency(runningTotal)}</span>
+            <span className="font-semibold text-foreground">
+              {formatCurrency(runningTotal)}
+              {taxRate > 0 && runningTotal > 0 && (
+                <span className="ml-1 font-normal text-muted" title={`Est. with ${userState} ${formatTaxRate(taxRate)} base tax`}>
+                  (~{formatCurrency(runningTotal * (1 + taxRate))} w/tax)
+                </span>
+              )}
+            </span>
           </div>
           <div className="h-2 rounded-full bg-slate-100 overflow-hidden">
             <motion.div
@@ -232,7 +266,7 @@ export default function ShoppingSessionPage() {
 
         {/* View Mode Switcher */}
         {!showReview && (
-          <div className="flex items-center gap-1 bg-slate-100 rounded-xl p-1 w-fit">
+          <div className="flex items-center gap-1 bg-slate-100 dark:bg-[#283447] rounded-xl p-1 w-fit">
             {([
               { mode: 'list' as ViewMode, icon: List, label: 'List' },
               { mode: 'checklist' as ViewMode, icon: LayoutGrid, label: 'Checklist' },
@@ -244,7 +278,7 @@ export default function ShoppingSessionPage() {
                 className={cn(
                   'flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all',
                   viewMode === mode
-                    ? 'bg-white shadow-sm text-foreground'
+                    ? 'bg-white dark:bg-[#374151] shadow-sm text-foreground'
                     : 'text-muted hover:text-foreground'
                 )}
               >
@@ -295,7 +329,7 @@ export default function ShoppingSessionPage() {
                     key={item.id}
                     className={cn(
                       'flex items-center gap-2 py-1.5 px-1.5 rounded-lg transition-all group',
-                      isDone ? 'opacity-50' : 'hover:bg-slate-50'
+                      isDone ? 'opacity-50' : 'hover:bg-slate-50 dark:hover:bg-white/5'
                     )}
                   >
                     <button
@@ -306,33 +340,44 @@ export default function ShoppingSessionPage() {
                       className={cn(
                         'w-4 h-4 rounded border-2 flex items-center justify-center shrink-0 transition-colors',
                         isPickedUp ? 'bg-emerald-500 border-emerald-500' :
-                        isDone ? 'bg-slate-300 border-slate-300' :
-                        'border-slate-300 hover:border-primary'
+                        isDone ? 'bg-slate-300 border-slate-300 dark:bg-slate-600 dark:border-slate-600' :
+                        'border-slate-300 dark:border-slate-600 hover:border-primary'
                       )}
                     >
                       {isDone && <Check className="h-2.5 w-2.5 text-white" />}
                     </button>
-                    <span className={cn(
-                      'text-xs flex-1 min-w-0 truncate',
-                      isDone && 'line-through text-muted'
-                    )}>
-                      {item.itemName}
-                    </span>
+                    <div className="flex-1 min-w-0">
+                      <span className={cn(
+                        'text-xs block truncate',
+                        isDone && 'line-through text-muted'
+                      )}>
+                        {item.itemName}
+                      </span>
+                      {item.aisleHint && item.aisleHint !== 'Unknown' && (
+                        <span className={cn(
+                          'flex items-center gap-0.5 text-[9px] leading-tight mt-0.5',
+                          item.aisleVerified ? 'text-emerald-600' : 'text-blue-400'
+                        )}>
+                          <MapPin className="h-2.5 w-2.5 shrink-0" />
+                          <span className="truncate">{item.aisleHint}</span>
+                        </span>
+                      )}
+                    </div>
                     {item.quantity && (
                       <span className="text-[9px] text-muted shrink-0">{item.quantity}</span>
                     )}
                     {!isDone && (
                       <div className="flex items-center gap-0.5 shrink-0">
                         <button onClick={() => updateStatusMutation.mutate({ itemId: item.id, status: 'OUT_OF_STOCK' })}
-                          className="p-0.5 rounded text-slate-400 hover:text-slate-600" title="Out of Stock">
+                          className="p-0.5 rounded text-slate-400 hover:text-slate-600 dark:hover:text-slate-200" title="Out of Stock">
                           <X className="h-3 w-3" />
                         </button>
                         <button onClick={() => updateStatusMutation.mutate({ itemId: item.id, status: 'TOO_EXPENSIVE' })}
-                          className="p-0.5 rounded text-amber-400 hover:text-amber-600" title="Too Expensive">
+                          className="p-0.5 rounded text-amber-400 hover:text-amber-600 dark:hover:text-amber-300" title="Too Expensive">
                           <DollarSign className="h-3 w-3" />
                         </button>
                         <button onClick={() => updateStatusMutation.mutate({ itemId: item.id, status: 'SKIPPED' })}
-                          className="p-0.5 rounded text-slate-400 hover:text-slate-600" title="Skip">
+                          className="p-0.5 rounded text-slate-400 hover:text-slate-600 dark:hover:text-slate-200" title="Skip">
                           <AlertTriangle className="h-3 w-3" />
                         </button>
                       </div>
@@ -520,6 +565,19 @@ export default function ShoppingSessionPage() {
                       <span>Confirmed Total</span>
                       <span className="text-primary">{formatCurrency(confirmedTotal)}</span>
                     </div>
+                    {taxRate > 0 && confirmedTotal > 0 && (
+                      <>
+                        <div className="flex justify-between text-sm text-muted">
+                          <span>Est. tax ({userState} base {formatTaxRate(taxRate)})</span>
+                          <span className="font-mono">{formatCurrency(confirmedTotal * taxRate)}</span>
+                        </div>
+                        <div className="flex justify-between text-sm font-semibold">
+                          <span>Est. total with tax</span>
+                          <span className="font-mono">{formatCurrency(confirmedTotal * (1 + taxRate))}</span>
+                        </div>
+                        <p className="text-[10px] text-muted text-right">State base rate only — local taxes not included</p>
+                      </>
+                    )}
                     {estimatedTotal > 0 && diff !== 0 && (
                       <p className={cn('text-[10px] text-right', diff > 0 ? 'text-red-500' : 'text-emerald-600')}>
                         {diff > 0 ? '+' : ''}{formatCurrency(diff)} vs estimate
@@ -662,6 +720,14 @@ export default function ShoppingSessionPage() {
                 />
                 <p className="text-[10px] text-muted mt-1">Helps improve aisle info for future trips here</p>
               </div>
+              <div>
+                <label className="text-xs font-medium text-muted block mb-1.5">Deal / Coupon applied (optional)</label>
+                <Input
+                  placeholder="e.g., Buy 1 Get 1 Free, $0.50 off coupon"
+                  value={markDealNote}
+                  onChange={(e) => setMarkDealNote(e.target.value)}
+                />
+              </div>
             </div>
           )}
           <DialogFooter>
@@ -771,7 +837,7 @@ export default function ShoppingSessionPage() {
 
       {/* Floating summary bar */}
       {pending.length > 0 && (
-        <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-card-border px-4 py-3 flex items-center justify-between lg:ml-64 z-30">
+        <div className="fixed bottom-0 left-0 right-0 bg-white dark:bg-[#1F2937] border-t border-card-border dark:border-[#374151] px-4 py-3 flex items-center justify-between lg:ml-64 z-30">
           <div>
             <p className="text-sm font-semibold">{formatCurrency(runningTotal)} spent</p>
             <p className="text-[10px] text-muted">{pending.length} items remaining</p>
@@ -824,10 +890,28 @@ function ListItemCard({ item, onPickUp, onOutOfStock, onSkip, onTooExpensive }: 
           </div>
         </div>
 
-        {item.aisleHint && item.aisleHint !== 'Unknown' && (
-          <div className="mt-2 px-2.5 py-1.5 rounded-lg bg-blue-50 border border-blue-100 flex items-center gap-1.5">
-            <MapPin className="h-3.5 w-3.5 text-blue-600 shrink-0" />
-            <span className="text-xs font-medium text-blue-800">{item.aisleHint}</span>
+        {/* In-store location badge */}
+        {item.aisleHint && item.aisleHint !== 'Unknown' ? (
+          <div className={cn(
+            'mt-2 px-2.5 py-1.5 rounded-lg flex items-center gap-1.5',
+            item.aisleVerified
+              ? 'bg-emerald-50 border border-emerald-100'
+              : 'bg-blue-50 border border-blue-100'
+          )}>
+            <MapPin className={cn('h-3.5 w-3.5 shrink-0', item.aisleVerified ? 'text-emerald-600' : 'text-blue-600')} />
+            <span className={cn('text-xs font-medium flex-1', item.aisleVerified ? 'text-emerald-800' : 'text-blue-800')}>
+              {item.aisleHint}
+            </span>
+            {item.aisleVerified ? (
+              <span className="text-[9px] font-semibold text-emerald-600 uppercase tracking-wide">Verified</span>
+            ) : (
+              <span className="text-[9px] text-blue-500 uppercase tracking-wide">Estimated</span>
+            )}
+          </div>
+        ) : (
+          <div className="mt-2 px-2.5 py-1.5 rounded-lg bg-slate-50 border border-slate-100 flex items-center gap-1.5">
+            <MapPin className="h-3.5 w-3.5 text-slate-300 shrink-0" />
+            <span className="text-[10px] text-muted italic">No location data — add aisle after pick-up</span>
           </div>
         )}
 
@@ -860,7 +944,7 @@ function AisleCard({ title, pendingItems, allItems, onPickUp, onOutOfStock, onSk
   onPickUp: (item: any) => void; onOutOfStock: (id: string) => void;
   onSkip: (id: string) => void; onTooExpensive: (id: string) => void; onRevert: (id: string) => void;
 }) {
-  const [expanded, setExpanded] = useState(pendingItems.length > 0);
+  const [expanded, setExpanded] = useState(false);
   const doneCount = allItems.filter((i: any) => i.status !== 'PENDING').length;
   const totalCount = allItems.length;
   const allDone = pendingItems.length === 0;
@@ -871,7 +955,7 @@ function AisleCard({ title, pendingItems, allItems, onPickUp, onOutOfStock, onSk
         className="w-full flex items-center gap-3 px-4 py-3 text-left">
         <div className={cn(
           'w-8 h-8 rounded-lg flex items-center justify-center shrink-0',
-          allDone ? 'bg-emerald-100' : 'bg-primary/10'
+          allDone ? 'bg-emerald-100 dark:bg-emerald-900/30' : 'bg-primary/10'
         )}>
           {allDone ? <Check className="h-4 w-4 text-emerald-600" /> : <Package className="h-4 w-4 text-primary" />}
         </div>
@@ -894,7 +978,7 @@ function AisleCard({ title, pendingItems, allItems, onPickUp, onOutOfStock, onSk
           >
             <div className="px-4 pb-3 space-y-1.5">
               {pendingItems.map((item: any) => (
-                <div key={item.id} className="flex items-center gap-2 py-2 px-2 rounded-lg border border-card-border">
+                <div key={item.id} className="flex items-center gap-2 py-2 px-2 rounded-lg border border-card-border dark:border-[#374151] dark:bg-[#283447]/40">
                   <div className="flex-1 min-w-0">
                     <p className="text-sm font-medium">{item.itemName}</p>
                     {item.quantity && <span className="text-[10px] text-muted">{item.quantity}</span>}
@@ -922,7 +1006,7 @@ function AisleCard({ title, pendingItems, allItems, onPickUp, onOutOfStock, onSk
               {allItems.filter((i: any) => i.status !== 'PENDING').map((item: any) => (
                 <div key={item.id} className={cn(
                   'flex items-center gap-2 py-1.5 px-2 rounded-lg',
-                  item.status === 'PICKED_UP' ? 'bg-emerald-50' : 'bg-slate-50 opacity-60'
+                  item.status === 'PICKED_UP' ? 'bg-emerald-50 dark:bg-emerald-900/20' : 'bg-slate-50 dark:bg-[#283447]/40 opacity-60'
                 )}>
                   {item.status === 'PICKED_UP' ? (
                     <Check className="h-3.5 w-3.5 text-emerald-600 shrink-0" />

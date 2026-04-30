@@ -3,8 +3,10 @@ import { Prisma } from '@prisma/client';
 import { AppError } from '../middleware/errorHandler.js';
 import * as aiService from './ai.service.js';
 import { searchNearbyStores } from './store.service.js';
+import { isKrogerStore, findKrogerLocationId, seedAislesFromKroger } from './kroger.service.js';
 import { emailNotificationsConfigured, sendShoppingAlertEmail } from './notification.service.js';
 import { categorizeItem } from '../data/groceryReferenceData.js';
+import { cacheAiEstimate } from './pricing.service.js';
 
 function categorizeGroceryItem(itemName: string): string {
   return categorizeItem(itemName) ?? 'Other';
@@ -81,6 +83,7 @@ export async function addShoppingItem(userId: string, data: any) {
       profileIds: data.profileIds || [],
       priority: data.priority || 'MEDIUM',
       notes: data.notes,
+      dealNote: data.dealNote ?? null,
       estimatedPrice: data.estimatedPrice != null ? Number(data.estimatedPrice) : null,
       assignedStore: data.assignedStore || null,
     },
@@ -95,7 +98,18 @@ export async function updateShoppingItem(userId: string, id: string, data: any) 
   const item = await prisma.shoppingList.findFirst({ where: { id, userId } });
   if (!item) throw new AppError(404, 'Shopping item not found');
 
-  return prisma.shoppingList.update({ where: { id }, data });
+  const allowedFields = [
+    'itemName', 'category', 'quantity', 'priority', 'notes', 'dealNote',
+    'estimatedPrice', 'assignedStore', 'checked', 'profileIds',
+  ] as const;
+  const updateData: Record<string, unknown> = {};
+  for (const field of allowedFields) {
+    if (Object.prototype.hasOwnProperty.call(data, field)) {
+      updateData[field] = (data as Record<string, unknown>)[field];
+    }
+  }
+
+  return prisma.shoppingList.update({ where: { id }, data: updateData });
 }
 
 export async function deleteShoppingItem(userId: string, id: string) {
@@ -196,6 +210,17 @@ export async function findStores(userId: string, zipCode: string) {
       : undefined
   );
 
+  // Write AI-estimated prices to cache (fire-and-forget)
+  const zipRegionForCache = zipCode.slice(0, 3);
+  for (const store of stores) {
+    if (!store.itemPrices?.length) continue;
+    for (const ip of store.itemPrices) {
+      if (ip.confidence === 'ai_estimate' && ip.unitPrice > 0) {
+        cacheAiEstimate(ip.itemName, store.name, zipRegionForCache, ip.unitPrice);
+      }
+    }
+  }
+
   return stores;
 }
 
@@ -226,6 +251,19 @@ export async function startShoppingSession(userId: string, storeName?: string) {
     }
   }
 
+  // If the store is a Kroger-family banner, seed real aisle data from Kroger API
+  if (storeName && isKrogerStore(storeName) && prefs?.zipCode) {
+    try {
+      const locationId = await findKrogerLocationId(prefs.zipCode);
+      if (locationId) {
+        const zipRegion = prefs.zipCode.slice(0, 3);
+        await seedAislesFromKroger(userId, locationId, storeName, zipRegion);
+      }
+    } catch {
+      // Non-fatal — fall back to AI predictions
+    }
+  }
+
   // Build initial item statuses and enrich with aisle hints + price estimates
   const itemStatuses: Record<string, string> = {};
   const itemPrices: Record<string, number> = {};
@@ -235,6 +273,7 @@ export async function startShoppingSession(userId: string, storeName?: string) {
     itemStatuses[item.id] = 'PENDING';
 
     let aisleHint = 'Unknown';
+    let aisleVerified = false;
     if (storeName) {
       // Check DB for known aisle
       const known = await prisma.aisleLocation.findFirst({
@@ -243,6 +282,7 @@ export async function startShoppingSession(userId: string, storeName?: string) {
       });
       if (known) {
         aisleHint = known.aisleLocation;
+        aisleVerified = true;
       } else {
         try {
           aisleHint = await aiService.predictAisleLocation(item.itemName, storeName);
@@ -263,6 +303,7 @@ export async function startShoppingSession(userId: string, storeName?: string) {
       notes: item.notes,
       sourceRef: item.sourceRef,
       aisleHint,
+      aisleVerified,
       estimatedPrice,
     });
   }
@@ -317,12 +358,13 @@ export async function getShoppingSession(userId: string, sessionId: string) {
       .filter((item) => statuses[item.id] !== undefined)
       .map(async (item) => {
         let aisleHint = item.category || 'Unknown';
+        let aisleVerified = false;
         if (storeName) {
           const known = await prisma.aisleLocation.findFirst({
             where: { itemName: item.itemName, storeName },
             orderBy: { verifiedCount: 'desc' },
           });
-          if (known) aisleHint = known.aisleLocation;
+          if (known) { aisleHint = known.aisleLocation; aisleVerified = true; }
         }
         return {
           id: item.id,
@@ -333,6 +375,7 @@ export async function getShoppingSession(userId: string, sessionId: string) {
           notes: item.notes,
           sourceRef: item.sourceRef,
           aisleHint,
+          aisleVerified,
           estimatedPrice: priceMap[item.itemName] || null,
           actualPrice: prices[item.id] || null,
           status: statuses[item.id] || 'PENDING',
@@ -553,9 +596,26 @@ export async function saveAisleLocation(
   return { success: true };
 }
 
+function scaleIngredient(ingredient: string, factor: number): string {
+  if (factor === 1) return ingredient;
+  const match = ingredient.match(/^(\d+(?:\/\d+)?(?:\.\d+)?)\s*/);
+  if (!match) return ingredient;
+  const raw = match[1];
+  let qty: number;
+  if (raw.includes('/')) {
+    const [n, d] = raw.split('/').map(Number);
+    qty = n / d;
+  } else {
+    qty = parseFloat(raw);
+  }
+  const scaled = qty * factor;
+  const formatted = scaled % 1 === 0 ? String(scaled) : String(Math.round(scaled * 100) / 100);
+  return ingredient.replace(match[0], `${formatted} `);
+}
+
 export async function addIngredientsToList(
   userId: string,
-  data: { ingredients: string[]; mealName: string; mealDate?: string; profileId?: string; category?: string }
+  data: { ingredients: string[]; mealName: string; mealDate?: string; profileId?: string; category?: string; servings?: number }
 ) {
   if (!data.ingredients || data.ingredients.length === 0) {
     throw new AppError(400, 'No ingredients provided');
@@ -567,14 +627,16 @@ export async function addIngredientsToList(
     : data.mealName;
 
   const created = [];
+  const servingFactor = data.servings && data.servings > 1 ? data.servings : 1;
   for (const ingredient of data.ingredients) {
+    const scaledIngredient = scaleIngredient(ingredient, servingFactor);
     // Use hardcoded category lookup instead of AI
-    const groceryCategory = categorizeGroceryItem(ingredient);
+    const groceryCategory = categorizeGroceryItem(scaledIngredient);
 
     const saved = await prisma.shoppingList.create({
       data: {
         userId,
-        itemName: ingredient,
+        itemName: scaledIngredient,
         category: groceryCategory,
         profileIds: data.profileId ? [data.profileId] : [],
         priority,

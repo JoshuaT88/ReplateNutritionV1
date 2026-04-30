@@ -28,11 +28,11 @@ export default function ProfilesPage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-semibold">Profiles</h1>
+          <h1 className="text-2xl font-semibold">Nutrition Profiles</h1>
           <p className="text-sm text-muted mt-0.5">Manage nutrition profiles for your household.</p>
         </div>
         <Link to="/profiles/new">
-          <Button><Plus className="h-4 w-4" /> Add Profile</Button>
+          <Button><Plus className="h-4 w-4" /> Add Nutrition Profile</Button>
         </Link>
       </div>
 
@@ -52,7 +52,7 @@ export default function ProfilesPage() {
       ) : isLoading ? (
         <div className="grid sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
           {[1, 2, 3, 4].map((i) => (
-            <div key={i} className="rounded-2xl border border-card-border bg-white p-5">
+            <div key={i} className="rounded-2xl border border-card-border bg-white dark:bg-[#1F2937] dark:border-[#374151] p-5">
               <Skeleton className="w-14 h-14 rounded-xl mb-3" />
               <Skeleton className="h-5 w-32 mb-2" />
               <Skeleton className="h-4 w-24" />
@@ -73,7 +73,7 @@ export default function ProfilesPage() {
               transition={{ delay: i * 0.05 }}
             >
               <Link to={`/profiles/${profile.id}`}>
-                <div className="group rounded-2xl border border-card-border bg-white p-5 shadow-card hover:shadow-card-hover hover:-translate-y-1 transition-all duration-200">
+                <div className="group rounded-2xl border border-card-border bg-white dark:bg-[#1F2937] dark:border-[#374151] p-5 shadow-card hover:shadow-card-hover hover:-translate-y-1 transition-all duration-200">
                   <UserAvatar name={profile.name} imageUrl={profile.avatarUrl} size="lg" className="mb-3" />
                   <h3 className="font-semibold text-foreground group-hover:text-primary transition-colors">{profile.name}</h3>
                   <div className="flex items-center gap-2 mt-1">

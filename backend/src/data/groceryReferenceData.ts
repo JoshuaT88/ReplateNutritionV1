@@ -389,6 +389,11 @@ export function isGroceryItem(itemName: string): boolean {
 /** Returns the grocery category for an item using local lookup. Returns null if not found. */
 export function categorizeItem(itemName: string): string | null {
   const lower = itemName.toLowerCase().trim();
+  // Preserved/processed prefixes override the base ingredient's natural category
+  const pantryPrefixes = ['canned ', 'jarred ', 'tinned ', 'dried ', 'dehydrated '];
+  const frozenPrefixes = ['frozen '];
+  if (pantryPrefixes.some((p) => lower.startsWith(p))) return 'Pantry';
+  if (frozenPrefixes.some((p) => lower.startsWith(p))) return 'Frozen';
   for (const [category, keywords] of Object.entries(GROCERY_CATEGORY_MAP)) {
     for (const kw of keywords) {
       if (lower.includes(kw)) return category;

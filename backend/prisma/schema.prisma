@@ -60,6 +60,9 @@ model User {
   activityLogs          ActivityLog[]
   ownedHousehold        Household?      @relation("HouseholdOwner")
   householdMembership   HouseholdMember?
+  storeCorrections      StoreCorrection[]
+  inAppNotifications    InAppNotification[]
+  familySuggestions     FamilyMemberSuggestion[]
   dataExportUrl         String?   @map("data_export_url")
   dataExportExpiresAt   DateTime? @map("data_export_expires_at")
   dataExportRequestedAt DateTime? @map("data_export_requested_at")
@@ -131,6 +134,8 @@ model UserPreferences {
   shoppingDay           String? @map("shopping_day")
   perTripBudgetAllocation Float? @map("per_trip_budget_allocation")
   organizerRole         String? @map("organizer_role")
+  city                  String?
+  state                 String?
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
@@ -229,6 +234,7 @@ model ShoppingList {
   checked      Boolean      @default(false)
   priority     ItemPriority @default(MEDIUM)
   notes        String?
+  dealNote     String?  @map("deal_note")
   estimatedPrice Float?     @map("estimated_price")
   assignedStore  String?    @map("assigned_store")
   sourceRef    String?      @map("source_ref")
@@ -433,18 +439,24 @@ model PushSubscription {
 }
 
 model CustomMeal {
-  id               String   @id @default(uuid())
-  userId           String   @map("user_id")
-  name             String
-  mealType         String   @map("meal_type")
-  ingredients      String[] @default([])
-  preparationNotes String?  @map("preparation_notes")
-  calories         Int?
-  servings         Int?     @default(1)
-  prepTime         Int?     @map("prep_time")
-  tags             String[] @default([])
-  createdAt        DateTime @default(now()) @map("created_at")
-  updatedAt        DateTime @updatedAt @map("updated_at")
+  id                 String   @id @default(uuid())
+  userId             String   @map("user_id")
+  name               String
+  mealType           String   @map("meal_type")
+  ingredients        String[] @default([])
+  preparationNotes   String?  @map("preparation_notes")
+  calories           Int?
+  protein            Float?
+  carbs              Float?
+  fat                Float?
+  fiber              Float?
+  servings           Int?     @default(1)
+  prepTime           Int?     @map("prep_time")
+  tags               String[] @default([])
+  photoUrl           String?  @map("photo_url")
+  ingredientScaling  Json?    @map("ingredient_scaling")
+  createdAt          DateTime @default(now()) @map("created_at")
+  updatedAt          DateTime @updatedAt @map("updated_at")
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
@@ -481,6 +493,7 @@ model Household {
 
   owner   User              @relation("HouseholdOwner", fields: [ownerId], references: [id], onDelete: Cascade)
   members HouseholdMember[]
+  suggestions FamilyMemberSuggestion[]
 
   @@map("households")
 }
@@ -503,4 +516,96 @@ model HouseholdMember {
   @@index([householdId])
   @@index([inviteToken])
   @@map("household_members")
+}
+
+model StoreCorrection {
+  id             String   @id @default(uuid())
+  userId         String   @map("user_id")
+  storeName      String   @map("store_name")
+  currentAddress String   @map("current_address")
+  correction     String   // the corrected address the user provides
+  notes          String?
+  status         String   @default("pending") // pending | approved | rejected
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([status])
+  @@map("store_corrections")
+}
+
+model StoreOverride {
+  id           String   @id @default(uuid())
+  storeName    String   @unique @map("store_name")
+  address      String
+  correctedBy  String?  @map("corrected_by")
+  approvedAt   DateTime @default(now()) @map("approved_at")
+
+  @@map("store_overrides")
+}
+
+model StoreCache {
+  id         String   @id @default(uuid())
+  cacheKey   String   @unique @map("cache_key") // "zip:<zipcode>" or "name:<normalized_query>"
+  queryType  String   @map("query_type") // "zip" | "name"
+  results    Json
+  expiresAt  DateTime @map("expires_at")
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  @@index([expiresAt])
+  @@map("store_cache")
+}
+
+model PriceCache {
+  id             String   @id @default(uuid())
+  cacheKey       String   @unique @map("cache_key") // "<itemName>::<storeName>::<zipRegion>"
+  itemName       String   @map("item_name")
+  storeName      String   @map("store_name")
+  zipRegion      String   @default("") @map("zip_region")
+  estimatedPrice Float    @map("estimated_price")
+  source         String   @default("ai") // ai | reference
+  expiresAt      DateTime @map("expires_at")
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  @@index([expiresAt])
+  @@index([itemName, storeName, zipRegion])
+  @@map("price_cache")
+}
+
+model InAppNotification {
+  id        String   @id @default(uuid())
+  userId    String   @map("user_id")
+  type      String
+  title     String
+  body      String?
+  isRead    Boolean  @default(false) @map("is_read")
+  metadata  Json?
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([isRead])
+  @@map("in_app_notifications")
+}
+
+model FamilyMemberSuggestion {
+  id                String   @id @default(uuid())
+  householdId       String   @map("household_id")
+  requestedByUserId String   @map("requested_by_user_id")
+  type              String   // 'meal' | 'shopping_item'
+  title             String
+  details           String?
+  status            String   @default("PENDING") // PENDING | APPROVED | DENIED
+  adminNotes        String?  @map("admin_notes")
+  createdAt         DateTime @default(now()) @map("created_at")
+  updatedAt         DateTime @updatedAt @map("updated_at")
+
+  household       Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  requestedByUser User      @relation(fields: [requestedByUserId], references: [id], onDelete: Cascade)
+
+  @@index([householdId])
+  @@index([status])
+  @@map("family_member_suggestions")
 }

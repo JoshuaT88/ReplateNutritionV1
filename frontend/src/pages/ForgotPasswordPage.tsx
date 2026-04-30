@@ -38,7 +38,7 @@ export default function ForgotPasswordPage() {
           <p className="text-sm text-muted mt-1">We'll send you a link to reset it.</p>
         </div>
 
-        <div className="bg-white rounded-2xl shadow-card p-8">
+        <div className="bg-white dark:bg-[#1F2937] dark:border dark:border-[#374151] rounded-2xl shadow-card p-8">
           {sent ? (
             <div className="text-center py-4">
               <div className="flex items-center justify-center w-12 h-12 rounded-2xl bg-emerald-50 mx-auto mb-4">

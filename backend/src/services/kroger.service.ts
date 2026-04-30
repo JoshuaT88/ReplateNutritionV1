@@ -191,3 +191,22 @@ export async function seedAislesFromKroger(
 export function krogerConfigured(): boolean {
   return !!(env.KROGER_CLIENT_ID && env.KROGER_CLIENT_SECRET);
 }
+
+// ─── T70 helpers for live pricing route ────────────────────────────────────
+
+const KROGER_BANNER_NAMES = [
+  'kroger', 'fred meyer', 'king soopers', 'ralphs', "smith's", "fry's",
+  'harris teeter', 'dillons', "baker's", 'city market', 'gerbes', 'jay c',
+  'food 4 less', 'foods co', 'pick n save', "mariano's", 'pay-less',
+];
+
+export function isKrogerStore(storeName: string): boolean {
+  const lower = storeName.toLowerCase();
+  return KROGER_BANNER_NAMES.some((b) => lower.includes(b));
+}
+
+/** Returns the locationId of the nearest Kroger store to the given ZIP, or null. */
+export async function findKrogerLocationId(zipCode: string): Promise<string | null> {
+  const locations = await findKrogerStores(zipCode, 15);
+  return locations[0]?.locationId ?? null;
+}

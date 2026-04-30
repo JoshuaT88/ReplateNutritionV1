@@ -1,8 +1,9 @@
 import { useState } from 'react';
+import { createPortal } from 'react-dom';
 import { NavLink, useLocation } from 'react-router-dom';
 import {
   LayoutDashboard, Users, ShoppingCart, CalendarDays, Package,
-  Settings, Menu, X, Sparkles, Activity, ChefHat, History,
+  Settings, Menu, X, Sparkles, Activity, ChefHat, History, UsersRound,
 } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -14,7 +15,7 @@ const DEFAULT_PINNED_TOS = ['/', '/profiles', '/shopping', '/meal-plan'];
 
 const ALL_NAV_DEFS = [
   { to: '/', icon: LayoutDashboard, label: 'Home', end: true, badge: null },
-  { to: '/profiles', icon: Users, label: 'Profiles', end: false, badge: null },
+  { to: '/profiles', icon: Users, label: 'Nutrition Profiles', end: false, badge: null },
   { to: '/shopping', icon: ShoppingCart, label: 'Shop', end: true, badge: 'shopping' as const },
   { to: '/meal-plan', icon: CalendarDays, label: 'Meals', end: false, badge: 'meals' as const },
   { to: '/pantry', icon: Package, label: 'Pantry', end: false, badge: 'pantry' as const },
@@ -40,7 +41,7 @@ function MobileNavInner({ drawerOpen, setDrawerOpen, location }: {
   setDrawerOpen: (v: boolean) => void;
   location: ReturnType<typeof useLocation>;
 }) {
-  const { preferences } = useAuth();
+  const { preferences, user } = useAuth();
 
   // Build effective pinned/drawer lists from user preferences
   const pinnedTos = (preferences?.pinnedNavItems as string[] | null) ?? DEFAULT_PINNED_TOS;
@@ -48,6 +49,18 @@ function MobileNavInner({ drawerOpen, setDrawerOpen, location }: {
     .map((to) => ALL_NAV_DEFS.find((d) => d.to === to))
     .filter(Boolean) as typeof ALL_NAV_DEFS;
   const effectiveDrawer = ALL_NAV_DEFS.filter((d) => !pinnedTos.includes(d.to));
+
+  const { data: household } = useQuery({
+    queryKey: ['household'],
+    queryFn: () => api.getHousehold(),
+    staleTime: 5 * 60_000,
+  });
+  const hasHousehold = !!household && (
+    household.ownerId === user?.id
+      ? household.members.some((m) => m.inviteStatus === 'ACCEPTED')
+      : household.members.some((m) => m.userId === user?.id && m.inviteStatus === 'ACCEPTED')
+  );
+
   const { data: shoppingList } = useQuery({
     queryKey: ['shoppingList'],
     queryFn: () => api.getShoppingList(),
@@ -87,7 +100,7 @@ function MobileNavInner({ drawerOpen, setDrawerOpen, location }: {
 
   return (
     <>
-      <nav className="lg:hidden fixed bottom-0 left-0 right-0 z-50 bg-white/95 dark:bg-slate-900/95 backdrop-blur-sm border-t border-card-border dark:border-slate-700 safe-area-bottom">
+      <nav className="lg:hidden fixed bottom-0 left-0 right-0 z-50 bg-white/95 dark:bg-slate-900/95 backdrop-blur-sm border-t border-card-border dark:border-[#374151] safe-area-bottom">
         <div className="flex items-center justify-around h-16 px-1 max-w-screen-sm mx-auto">
           {effectivePinned.map((tab) => {
             const count = getBadge(tab.badge);
@@ -108,7 +121,7 @@ function MobileNavInner({ drawerOpen, setDrawerOpen, location }: {
                     <div className={cn('relative', isActive && 'after:absolute after:-top-3 after:left-1/2 after:-translate-x-1/2 after:w-8 after:h-0.5 after:bg-primary after:rounded-full')}>
                       <tab.icon className={cn('h-5 w-5', isActive ? 'stroke-[2.5]' : 'stroke-[1.5]')} />
                       {count > 0 && (
-                        <span className="absolute -top-1.5 -right-1.5 flex items-center justify-center min-w-[16px] h-4 px-0.5 rounded-full bg-primary text-white text-[9px] font-bold leading-none">
+                        <span className="absolute -top-1.5 -right-2 flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full bg-primary text-white text-[9px] font-bold leading-none ring-1 ring-white">
                           {count > 99 ? '99+' : count}
                         </span>
                       )}
@@ -131,7 +144,7 @@ function MobileNavInner({ drawerOpen, setDrawerOpen, location }: {
             <div className="relative">
               <Menu className={cn('h-5 w-5', (drawerItemActive || drawerOpen) ? 'stroke-[2.5]' : 'stroke-[1.5]')} />
               {drawerBadgeTotal > 0 && (
-                <span className="absolute -top-1.5 -right-1.5 flex items-center justify-center min-w-[16px] h-4 px-0.5 rounded-full bg-red-500 text-white text-[9px] font-bold leading-none">
+                <span className="absolute -top-1.5 -right-2 flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full bg-red-500 text-white text-[9px] font-bold leading-none ring-1 ring-white">
                   {drawerBadgeTotal > 9 ? '9+' : drawerBadgeTotal}
                 </span>
               )}
@@ -141,79 +154,102 @@ function MobileNavInner({ drawerOpen, setDrawerOpen, location }: {
         </div>
       </nav>
 
-      {/* More drawer */}
-      <AnimatePresence>
-        {drawerOpen && (
-          <>
-            {/* Backdrop */}
-            <motion.div
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              transition={{ duration: 0.2 }}
-              className="lg:hidden fixed inset-0 bg-black/40 z-[60]"
-              onClick={() => setDrawerOpen(false)}
-            />
+      {/* More drawer — rendered in portal to avoid z-index stacking issues */}
+      {typeof document !== 'undefined' && createPortal(
+        <AnimatePresence>
+          {drawerOpen && (
+            <>
+              {/* Backdrop */}
+              <motion.div
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                transition={{ duration: 0.2 }}
+                className="fixed inset-0 bg-black/40"
+                style={{ zIndex: 9998 }}
+                onClick={() => setDrawerOpen(false)}
+              />
 
-            {/* Drawer panel */}
-            <motion.div
-              initial={{ y: '100%' }}
-              animate={{ y: 0 }}
-              exit={{ y: '100%' }}
-              transition={{ type: 'spring', damping: 28, stiffness: 320 }}
-              className="lg:hidden fixed bottom-0 left-0 right-0 z-[70] bg-white dark:bg-slate-900 rounded-t-2xl pb-safe"
-            >
-              {/* Drag handle */}
-              <div className="flex items-center justify-center pt-3 pb-1">
-                <div className="w-10 h-1 bg-slate-200 rounded-full" />
-              </div>
+              {/* Drawer panel */}
+              <motion.div
+                initial={{ y: '100%' }}
+                animate={{ y: 0 }}
+                exit={{ y: '100%' }}
+                transition={{ type: 'spring', damping: 28, stiffness: 320 }}
+                className="fixed bottom-0 left-0 right-0 bg-white dark:bg-[#111827] rounded-t-2xl"
+                style={{ zIndex: 9999 }}
+              >
+                {/* Drag handle */}
+                <div className="flex items-center justify-center pt-3 pb-1">
+                  <div className="w-10 h-1 bg-slate-200 dark:bg-[#374151] rounded-full" />
+                </div>
 
-              {/* Header */}
-              <div className="flex items-center justify-between px-5 py-2 border-b border-card-border">
-                <span className="text-sm font-semibold text-foreground">More</span>
-                <button
-                  onClick={() => setDrawerOpen(false)}
-                  className="p-1.5 rounded-lg text-muted hover:bg-slate-100 transition-colors"
-                >
-                  <X className="h-4 w-4" />
-                </button>
-              </div>
+                {/* Header */}
+                <div className="flex items-center justify-between px-5 py-2 border-b border-card-border dark:border-[#374151]">
+                  <span className="text-sm font-semibold text-foreground">More</span>
+                  <button
+                    onClick={() => setDrawerOpen(false)}
+                    className="p-1.5 rounded-lg text-muted hover:bg-slate-100 dark:hover:bg-[#283447] transition-colors"
+                  >
+                    <X className="h-4 w-4" />
+                  </button>
+                </div>
 
-              {/* Nav items */}
-              <div className="px-3 py-3 space-y-0.5 pb-8">
-                {effectiveDrawer.map((tab) => {
-                  const count = getBadge(tab.badge as any);
-                  const isActive = tab.end
-                    ? location.pathname === tab.to
-                    : location.pathname.startsWith(tab.to);
-                  return (
+                {/* Nav items */}
+                <div className="px-3 py-3 space-y-0.5 pb-20">
+                  {hasHousehold && (
                     <NavLink
-                      key={tab.to}
-                      to={tab.to}
-                      end={tab.end}
+                      to="/household"
+                      end={false}
                       onClick={() => setDrawerOpen(false)}
                       className={cn(
                         'flex items-center gap-3 px-3 py-3 rounded-xl transition-colors',
-                        isActive ? 'bg-primary/10 text-primary' : 'text-foreground hover:bg-slate-50'
+                        location.pathname.startsWith('/household')
+                          ? 'bg-primary/10 text-primary'
+                          : 'text-foreground hover:bg-slate-100 dark:hover:bg-[#283447]'
                       )}
                     >
-                      <tab.icon className={cn('h-5 w-5 shrink-0', isActive ? 'stroke-[2.5]' : 'stroke-[1.5]')} />
-                      <span className={cn('flex-1 text-sm', isActive ? 'font-semibold' : 'font-medium')}>
-                        {tab.label}
+                      <UsersRound className={cn('h-5 w-5 shrink-0', location.pathname.startsWith('/household') ? 'stroke-[2.5]' : 'stroke-[1.5]')} />
+                      <span className={cn('flex-1 text-sm', location.pathname.startsWith('/household') ? 'font-semibold' : 'font-medium')}>
+                        Household
                       </span>
-                      {count > 0 && (
-                        <span className="flex items-center justify-center min-w-[20px] h-5 px-1.5 rounded-full bg-red-500 text-white text-[10px] font-bold">
-                          {count > 99 ? '99+' : count}
-                        </span>
-                      )}
                     </NavLink>
-                  );
-                })}
-              </div>
-            </motion.div>
-          </>
-        )}
-      </AnimatePresence>
+                  )}
+                  {effectiveDrawer.map((tab) => {
+                    const count = getBadge(tab.badge as any);
+                    const isActive = tab.end
+                      ? location.pathname === tab.to
+                      : location.pathname.startsWith(tab.to);
+                    return (
+                      <NavLink
+                        key={tab.to}
+                        to={tab.to}
+                        end={tab.end}
+                        onClick={() => setDrawerOpen(false)}
+                        className={cn(
+                          'flex items-center gap-3 px-3 py-3 rounded-xl transition-colors',
+                          isActive ? 'bg-primary/10 text-primary' : 'text-foreground hover:bg-slate-100 dark:hover:bg-[#283447]'
+                        )}
+                      >
+                        <tab.icon className={cn('h-5 w-5 shrink-0', isActive ? 'stroke-[2.5]' : 'stroke-[1.5]')} />
+                        <span className={cn('flex-1 text-sm', isActive ? 'font-semibold' : 'font-medium')}>
+                          {tab.label}
+                        </span>
+                        {count > 0 && (
+                          <span className="flex items-center justify-center min-w-[20px] h-5 px-1.5 rounded-full bg-red-500 text-white text-[10px] font-bold">
+                            {count > 99 ? '99+' : count}
+                          </span>
+                        )}
+                      </NavLink>
+                    );
+                  })}
+                </div>
+              </motion.div>
+            </>
+          )}
+        </AnimatePresence>,
+        document.body
+      )}
     </>
   );
 }

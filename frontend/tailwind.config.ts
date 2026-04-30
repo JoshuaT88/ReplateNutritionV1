@@ -6,8 +6,8 @@ export default {
   theme: {
     extend: {
       colors: {
-        background: '#FAFAF9',
-        foreground: '#0F172A',
+        background: 'var(--color-background)',
+        foreground: 'var(--color-foreground)',
         primary: {
           DEFAULT: '#3B82F6',
           dark: '#0F172A',
@@ -25,19 +25,19 @@ export default {
           'green-mid': '#4ADE80',
         },
         muted: {
-          DEFAULT: '#64748B',
-          foreground: '#94A3B8',
+          DEFAULT: 'var(--color-muted)',
+          foreground: 'var(--color-muted)',
         },
         card: {
-          DEFAULT: '#FFFFFF',
-          border: '#E2E8F0',
+          DEFAULT: 'var(--color-card)',
+          border: 'var(--color-card-border)',
         },
         sidebar: {
-          bg: '#0F172A',
-          'bg-end': '#1E293B',
-          text: '#CBD5E1',
-          hover: 'rgba(255,255,255,0.06)',
-          active: '#3B82F6',
+          bg: '#0B1120',
+          'bg-end': '#111827',
+          text: '#9CA3AF',
+          hover: 'rgba(255,255,255,0.08)',
+          active: '#60A5FA',
         },
       },
       fontFamily: {

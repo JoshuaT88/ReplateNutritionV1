@@ -29,6 +29,9 @@ import shoppingGroupRoutes from './routes/shoppingGroups.js';
 import activityRoutes from './routes/activity.js';
 import householdRoutes, { createPreviewRouter } from './routes/household.js';
 import dataExportRoutes from './routes/dataExport.js';
+import storeCorrectionRoutes from './routes/storeCorrections.js';
+import notificationRoutes from './routes/notifications.js';
+import suggestionRoutes from './routes/suggestions.js';
 import { type AuthRequest } from './middleware/auth.js';
 
 const app = express();
@@ -104,6 +107,9 @@ app.use('/api/activity', activityRoutes);
 app.use('/api/household', householdRoutes);
 app.use('/api/household', createPreviewRouter());
 app.use('/api/data-export', dataExportRoutes);
+app.use('/api/store-corrections', storeCorrectionRoutes);
+app.use('/api/notifications', notificationRoutes);
+app.use('/api/suggestions', suggestionRoutes);
 
 app.use(errorHandler);
 

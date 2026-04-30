@@ -29,6 +29,7 @@ const MacroLogPage = lazy(() => import('@/pages/MacroLogPage'));
 const PantryPage = lazy(() => import('@/pages/PantryPage'));
 const RecipesPage = lazy(() => import('@/pages/RecipesPage'));
 const JoinHouseholdPage = lazy(() => import('@/pages/JoinHouseholdPage'));
+const HouseholdPage = lazy(() => import('@/pages/HouseholdPage'));
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -109,6 +110,7 @@ export default function App() {
                 <Route path="/recipes" element={<RecipesPage />} />
                 <Route path="/help" element={<HelpPage />} />
                 <Route path="/support" element={<SupportPage />} />
+                <Route path="/household" element={<Suspense fallback={<PageSpinner />}><HouseholdPage /></Suspense>} />
               </Route>
 
               {/* 404 */}

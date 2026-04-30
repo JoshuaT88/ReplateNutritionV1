@@ -90,11 +90,14 @@ export async function forgotPassword(email: string) {
       to: email,
       subject: 'Reset your Replate Nutrition password',
       html: `
-        <div style="font-family: Inter, sans-serif; max-width: 480px; margin: 0 auto; padding: 40px 20px;">
-          <h2 style="color: #0F172A;">Reset Your Password</h2>
-          <p style="color: #374151;">Click the link below to reset your password. This link expires in 1 hour.</p>
-          <a href="${resetUrl}" style="display: inline-block; padding: 12px 24px; background: #3B82F6; color: white; border-radius: 12px; text-decoration: none; margin-top: 16px;">Reset Password</a>
-          <p style="color: #6B7280; font-size: 13px; margin-top: 24px;">If you didn't request this, you can safely ignore this email.</p>
+        <div style="background-color:#ffffff;font-family:Inter,Arial,sans-serif;max-width:480px;margin:0 auto;padding:40px 20px;">
+          <div style="border:1px solid #E2E8F0;border-radius:16px;padding:28px;background-color:#ffffff;">
+            <p style="font-size:12px;letter-spacing:0.08em;text-transform:uppercase;color:#64748B;margin:0 0 10px;">Replate Nutrition</p>
+            <h2 style="color:#0F172A;font-size:22px;margin:0 0 12px;">Reset Your Password</h2>
+            <p style="color:#334155;font-size:15px;line-height:1.6;margin:0 0 20px;">Click the link below to reset your password. This link expires in 1 hour.</p>
+            <a href="${resetUrl}" style="display:inline-block;padding:12px 24px;background:#3B82F6;color:#ffffff;border-radius:12px;text-decoration:none;font-weight:600;font-size:15px;">Reset Password</a>
+            <p style="color:#6B7280;font-size:13px;margin-top:24px;">If you didn't request this, you can safely ignore this email.</p>
+          </div>
         </div>
       `,
     });

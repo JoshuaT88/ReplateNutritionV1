@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 
 import { motion } from 'framer-motion';
-import { Sparkles, Star, ShoppingCart, CalendarDays, Loader2, Trash2, ChevronDown, Search, UtensilsCrossed, Tag, Leaf, AlertTriangle } from 'lucide-react';
+import { Sparkles, Star, ShoppingCart, CalendarDays, Loader2, Trash2, ChevronDown, Search, UtensilsCrossed, Tag, Leaf, AlertTriangle, BookMarked } from 'lucide-react';
 import { api } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -14,6 +14,7 @@ import { ErrorCard } from '@/components/shared/ErrorCard';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { useToast } from '@/components/ui/toast';
 import { cn } from '@/lib/utils';
+import { PageTutorial } from '@/components/shared/PageTutorial';
 import type { Recommendation } from '@/types';
 
 const CATEGORIES = ['breakfast', 'lunch', 'dinner', 'snack', 'beverage', 'dessert', 'brand'];
@@ -110,21 +111,57 @@ export default function RecommendationsPage() {
     onError: (err: Error) => toast('error', 'Failed to add', err.message),
   });
 
+  const saveToRecipesMutation = useMutation({
+    mutationFn: (rec: Recommendation) => api.createCustomMeal({
+      name: rec.itemName,
+      mealType: rec.category || 'dinner',
+      ingredients: rec.ingredients || [],
+      // Don't store the AI reason as steps — user can generate real steps from the Recipes page
+      preparationNotes: null,
+      calories: rec.nutrition?.calories || undefined,
+      tags: [rec.itemType, rec.category].filter(Boolean) as string[],
+    }),
+    onSuccess: (_data, rec) => {
+      queryClient.invalidateQueries({ queryKey: ['custom-meals'] });
+      toast('success', `"${rec.itemName}" saved to My Recipes — open the Recipes page to generate step-by-step instructions`);
+    },
+    onError: (err: Error) => toast('error', 'Failed to save recipe', err.message),
+  });
+
   const addToMealPlanMutation = useMutation({
-    mutationFn: ({ rec, date, mealType }: { rec: Recommendation; date: string; mealType: string }) =>
-      api.createMealPlan({
+    mutationFn: async ({ rec, date, mealType }: { rec: Recommendation; date: string; mealType: string }) => {
+      // Add to meal plan
+      const result = await api.createMealPlan({
         profileId: rec.profileId,
         date,
         mealType: mealType as any,
         mealName: rec.itemName,
-        // Brand items (kibble, canned food, etc.) should add as the product title, not ingredients
         ingredients: rec.itemType === 'brand' ? [] : (rec.ingredients || []),
-        preparationNotes: rec.reason,
+        preparationNotes: null,
         calories: rec.nutrition?.calories || null,
-      }),
-    onSuccess: () => {
+      });
+      // Auto-save recipe for non-brand food items that have ingredients
+      if (rec.itemType !== 'brand' && (rec.ingredients?.length ?? 0) > 0) {
+        await api.createCustomMeal({
+          name: rec.itemName,
+          mealType: rec.category || mealType || 'dinner',
+          ingredients: rec.ingredients || [],
+          preparationNotes: null,
+          calories: rec.nutrition?.calories || undefined,
+          tags: [rec.itemType, rec.category].filter(Boolean) as string[],
+        }).catch(() => {}); // don't fail the whole action if recipe save fails
+        queryClient.invalidateQueries({ queryKey: ['custom-meals'] });
+      }
+      return result;
+    },
+    onSuccess: (_data, { rec }) => {
       queryClient.invalidateQueries({ queryKey: ['mealPlans'] });
-      toast('success', 'Added to meal plan!');
+      const savedRecipe = rec.itemType !== 'brand' && (rec.ingredients?.length ?? 0) > 0;
+      if (savedRecipe) {
+        toast('success', `Added to meal plan! Recipe for "${rec.itemName}" was also saved to your Recipes page.`);
+      } else {
+        toast('success', 'Added to meal plan!');
+      }
       setMealPlanRec(null);
     },
     onError: (err: Error) => toast('error', 'Failed to add to meal plan', err.message),
@@ -149,6 +186,12 @@ export default function RecommendationsPage() {
 
   return (
     <div className="space-y-6">
+      {/* T75 Page Tutorial */}
+      <PageTutorial pageKey="recommendations" steps={[
+        { title: 'Select profiles & categories', description: 'Click Generate, pick the profiles and food categories you want suggestions for.' },
+        { title: 'Review recommendations', description: 'Each card shows ingredients, nutrition, and price range. Star favorites to find them quickly.' },
+        { title: 'Act on a recommendation', description: 'Add directly to your shopping list, or add to your meal plan with one tap.' },
+      ]} />
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-semibold">Recommendations</h1>
@@ -216,7 +259,7 @@ export default function RecommendationsPage() {
         <Tabs defaultValue="all">
           <TabsList>
             <TabsTrigger value="all">All ({filtered?.length || 0})</TabsTrigger>
-            <TabsTrigger value="food">Foods</TabsTrigger>
+            <TabsTrigger value="food">Meals</TabsTrigger>
             <TabsTrigger value="brand">Brands</TabsTrigger>
             <TabsTrigger value="recipe">Recipes</TabsTrigger>
           </TabsList>
@@ -233,8 +276,10 @@ export default function RecommendationsPage() {
                       onDelete={() => deleteMutation.mutate(rec.id)}
                       onAddToList={() => addToListMutation.mutate(rec)}
                       onAddToMealPlan={() => openMealPlanDialog(rec)}
+                      onSaveToRecipes={() => saveToRecipesMutation.mutate(rec)}
                       isAddingToList={addToListMutation.isPending}
                       isAddingToMealPlan={addToMealPlanMutation.isPending}
+                      isSavingToRecipes={saveToRecipesMutation.isPending}
                     />
                   ))}
                 </div>
@@ -380,14 +425,16 @@ export default function RecommendationsPage() {
   );
 }
 
-function RecommendationCard({ rec, onFavorite, onDelete, onAddToList, onAddToMealPlan, isAddingToList, isAddingToMealPlan }: {
+function RecommendationCard({ rec, onFavorite, onDelete, onAddToList, onAddToMealPlan, onSaveToRecipes, isAddingToList, isAddingToMealPlan, isSavingToRecipes }: {
   rec: Recommendation;
   onFavorite: () => void;
   onDelete: () => void;
   onAddToList: () => void;
   onAddToMealPlan: () => void;
+  onSaveToRecipes: () => void;
   isAddingToList: boolean;
   isAddingToMealPlan: boolean;
+  isSavingToRecipes: boolean;
 }) {
   const [expanded, setExpanded] = useState(false);
 
@@ -498,6 +545,21 @@ function RecommendationCard({ rec, onFavorite, onDelete, onAddToList, onAddToMea
                 : <><CalendarDays className="h-3 w-3" /> Meal Plan</>
               }
             </Button>
+            {rec.itemType !== 'brand' && (
+              <Button
+                size="icon"
+                variant="ghost"
+                className="h-8 w-8"
+                title="Save to My Recipes"
+                onClick={onSaveToRecipes}
+                disabled={isSavingToRecipes}
+              >
+                {isSavingToRecipes
+                  ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  : <BookMarked className="h-3.5 w-3.5 text-muted hover:text-primary" />
+                }
+              </Button>
+            )}
             <Button size="icon" variant="ghost" className="h-8 w-8" onClick={onDelete}>
               <Trash2 className="h-3.5 w-3.5 text-muted hover:text-accent-danger" />
             </Button>

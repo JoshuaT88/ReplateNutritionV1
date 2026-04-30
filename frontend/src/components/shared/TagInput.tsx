@@ -42,7 +42,7 @@ export function TagInput({ value, onChange, placeholder, suggestions, className 
 
   return (
     <div className={cn('relative', className)}>
-      <div className="flex flex-wrap gap-1.5 rounded-xl border border-card-border bg-white px-3 py-2 min-h-[42px] focus-within:ring-2 focus-within:ring-primary/30 focus-within:border-primary transition-colors">
+      <div className="flex flex-wrap gap-1.5 rounded-xl border border-card-border dark:border-[#374151] bg-white dark:bg-[#1F2937] px-3 py-2 min-h-[42px] focus-within:ring-2 focus-within:ring-primary/30 focus-within:border-primary transition-colors">
         {value.map((tag, i) => (
           <span key={i} className="inline-flex items-center gap-1 rounded-lg bg-primary/10 text-primary text-xs font-medium px-2 py-1">
             {tag}
@@ -62,14 +62,14 @@ export function TagInput({ value, onChange, placeholder, suggestions, className 
         />
       </div>
       {showSuggestions && filtered && filtered.length > 0 && (
-        <div className="absolute z-10 top-full left-0 right-0 mt-1 bg-white border border-card-border rounded-xl shadow-card max-h-48 overflow-y-auto">
+        <div className="absolute z-10 top-full left-0 right-0 mt-1 bg-white dark:bg-[#1F2937] border border-card-border dark:border-[#374151] rounded-xl shadow-card max-h-48 overflow-y-auto">
           {filtered.map((suggestion) => (
             <button
               key={suggestion}
               type="button"
               onMouseDown={(e) => e.preventDefault()}
               onClick={() => addTag(suggestion)}
-              className="w-full text-left px-3 py-2 text-sm hover:bg-slate-50 transition-colors first:rounded-t-xl last:rounded-b-xl"
+              className="w-full text-left px-3 py-2 text-sm hover:bg-slate-50 dark:hover:bg-[#283447] transition-colors first:rounded-t-xl last:rounded-b-xl"
             >
               {suggestion}
             </button>

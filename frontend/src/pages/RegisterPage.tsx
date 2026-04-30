@@ -55,7 +55,7 @@ export default function RegisterPage() {
           <p className="text-sm text-muted mt-1">Start managing nutrition for your household.</p>
         </div>
 
-        <div className="bg-white rounded-2xl shadow-card p-8">
+        <div className="bg-white dark:bg-[#1F2937] dark:border dark:border-[#374151] rounded-2xl shadow-card p-8">
           <form onSubmit={handleSubmit} className="space-y-4">
             <div>
               <Label htmlFor="name">Full name</Label>

@@ -3,7 +3,7 @@ import { motion } from 'framer-motion';
 import { useMutation } from '@tanstack/react-query';
 import {
   AlertTriangle, Lightbulb, MessageSquare, Send, Loader2,
-  HelpCircle, Mail,
+  HelpCircle, Mail, Phone,
 } from 'lucide-react';
 import { api } from '@/lib/api';
 import { useToast } from '@/components/ui/toast';
@@ -83,7 +83,7 @@ export default function SupportPage() {
       </motion.div>
 
       {/* Tab switcher */}
-      <motion.div variants={fadeUp} className="flex gap-2 p-1 bg-slate-100 rounded-xl">
+      <motion.div variants={fadeUp} className="flex gap-2 p-1 bg-slate-100 dark:bg-[#283447] rounded-xl">
         {(['issue', 'feedback'] as Tab[]).map((t) => (
           <button
             key={t}
@@ -91,7 +91,7 @@ export default function SupportPage() {
             className={cn(
               'flex-1 flex items-center justify-center gap-2 rounded-lg py-2.5 text-sm font-medium transition-all duration-200',
               tab === t
-                ? 'bg-white shadow-soft text-foreground'
+                ? 'bg-white dark:bg-[#1F2937] shadow-soft text-foreground'
                 : 'text-muted hover:text-foreground'
             )}
           >
@@ -130,7 +130,7 @@ export default function SupportPage() {
                 <textarea
                   id="issue-desc"
                   className={cn(
-                    'w-full min-h-[140px] rounded-xl border border-card-border bg-white px-4 py-3',
+                    'w-full min-h-[140px] rounded-xl border border-card-border bg-white dark:bg-[#1F2937] dark:border-[#374151] dark:text-foreground px-4 py-3',
                     'text-sm placeholder:text-muted/60 focus:outline-none focus:ring-2 focus:ring-primary/30',
                     'resize-none transition-shadow'
                   )}
@@ -205,7 +205,7 @@ export default function SupportPage() {
                 <textarea
                   id="feedback-desc"
                   className={cn(
-                    'w-full min-h-[140px] rounded-xl border border-card-border bg-white px-4 py-3',
+                    'w-full min-h-[140px] rounded-xl border border-card-border bg-white dark:bg-[#1F2937] dark:border-[#374151] dark:text-foreground px-4 py-3',
                     'text-sm placeholder:text-muted/60 focus:outline-none focus:ring-2 focus:ring-primary/30',
                     'resize-none transition-shadow'
                   )}
@@ -243,6 +243,7 @@ export default function SupportPage() {
             <p className="text-sm font-semibold text-foreground mb-3">Quick Info</p>
             <div className="space-y-2">
               {[
+                { icon: Phone, label: 'Phone', value: '(865) 266-4549' },
                 { icon: Mail, label: 'Dev contact', value: 'jtctechsoft@gmail.com' },
                 { icon: HelpCircle, label: 'App version', value: '1.0.0-beta' },
               ].map(({ icon: Icon, label, value }) => (

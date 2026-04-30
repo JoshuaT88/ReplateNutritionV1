@@ -42,7 +42,7 @@ router.post('/invite', async (req: AuthRequest, res, next) => {
 // DELETE /api/household/members/:memberId — remove a member
 router.delete('/members/:memberId', async (req: AuthRequest, res, next) => {
   try {
-    await householdService.removeMember(req.user!.userId, req.params.memberId);
+    await householdService.removeMember(req.user!.userId, String(req.params.memberId));
     res.json({ success: true });
   } catch (err) { next(err); }
 });
@@ -51,7 +51,7 @@ router.delete('/members/:memberId', async (req: AuthRequest, res, next) => {
 router.patch('/members/:memberId/permissions', async (req: AuthRequest, res, next) => {
   try {
     const permissions = z.record(z.boolean()).parse(req.body.permissions);
-    await householdService.updateMemberPermissions(req.user!.userId, req.params.memberId, permissions);
+    await householdService.updateMemberPermissions(req.user!.userId, String(req.params.memberId), permissions);
     res.json({ success: true });
   } catch (err) { next(err); }
 });

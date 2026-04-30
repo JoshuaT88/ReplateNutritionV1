@@ -31,7 +31,8 @@ export async function generateMealPlan(
   date: string,
   mealTypes: string[],
   days: number = 7,
-  dietaryGoals?: string
+  dietaryGoals?: string,
+  onMeal?: (meal: any) => void   // T67: streaming callback
 ) {
   const profiles = await prisma.profile.findMany({
     where: { id: { in: profileIds }, userId },
@@ -95,14 +96,19 @@ export async function generateMealPlan(
     for (const d of batchDates) mealsPerDate[d] = 0;
 
     for (const meal of batchMeals) {
-      if (!meal.date || !batchDates.includes(meal.date)) {
-        // Assign to the date with fewest meals to balance distribution
+      // Normalize the date: trim, validate YYYY-MM-DD format, ensure it's in this batch
+      const trimmedDate = (meal.date || '').trim();
+      const isValidBatchDate = /^\d{4}-\d{2}-\d{2}$/.test(trimmedDate) && batchDates.includes(trimmedDate);
+      if (!isValidBatchDate) {
+        // Assign to the batch date with the fewest meals so far
         const minDate = batchDates.reduce((min, d) =>
-          (mealsPerDate[d] || 0) < (mealsPerDate[min] || 0) ? d : min
+          (mealsPerDate[d] ?? 0) < (mealsPerDate[min] ?? 0) ? d : min
         , batchDates[0]);
         meal.date = minDate;
+      } else {
+        meal.date = trimmedDate;
       }
-      mealsPerDate[meal.date] = (mealsPerDate[meal.date] || 0) + 1;
+      mealsPerDate[meal.date] = (mealsPerDate[meal.date] ?? 0) + 1;
     }
 
     allAiMeals.push(...batchMeals);
@@ -110,8 +116,14 @@ export async function generateMealPlan(
 
   const savedMeals = [];
   for (const meal of allAiMeals) {
-    const profile = profiles.find((p) => p.name === meal.profileName);
-    if (!profile) continue;
+    // Case-insensitive + trimmed profile name matching
+    const profile = profiles.find(
+      (p) => p.name.trim().toLowerCase() === (meal.profileName || '').trim().toLowerCase()
+    );
+    if (!profile) {
+      console.warn(`[MealPlan] No profile matched for AI-returned profileName: "${meal.profileName}". Skipping.`);
+      continue;
+    }
 
     // Allergen safety check for each meal before saving
     const [safeMeal] = await validateAndFilterItems(
@@ -139,11 +151,16 @@ export async function generateMealPlan(
         mealName: meal.mealName,
         ingredients: meal.ingredients || [],
         preparationNotes: meal.preparationNotes,
-        calories: meal.calories,
+        calories: meal.calories ?? null,
+        protein: meal.protein ?? null,
+        carbs: meal.carbs ?? null,
+        fat: meal.fat ?? null,
+        fiber: meal.fiber ?? null,
         safetyFlag: safeMeal.safetyFlag ?? null,
       },
     });
     savedMeals.push(saved);
+    if (onMeal) onMeal(saved);   // T67: stream each meal as saved
   }
 
   return savedMeals;

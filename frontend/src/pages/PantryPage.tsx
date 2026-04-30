@@ -11,6 +11,7 @@ import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent } from '@/components/ui/dialog';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useToast } from '@/components/ui/toast';
+import { PageTutorial } from '@/components/shared/PageTutorial';
 
 const CATEGORIES = [
   'Produce', 'Meat & Poultry', 'Dairy & Eggs', 'Frozen', 'Pantry',
@@ -54,7 +55,16 @@ export default function PantryPage() {
 
   const deleteMutation = useMutation({
     mutationFn: (id: string) => api.deletePantryItem(id),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['pantry'] }),
+    onMutate: async (id) => {
+      await qc.cancelQueries({ queryKey: ['pantry'] });
+      const snapshot = qc.getQueryData<PantryItem[]>(['pantry']);
+      qc.setQueryData<PantryItem[]>(['pantry'], (old) => old?.filter((i) => i.id !== id) ?? []);
+      return { snapshot };
+    },
+    onError: (_e, _v, ctx) => {
+      if (ctx?.snapshot) qc.setQueryData(['pantry'], ctx.snapshot);
+    },
+    onSettled: () => qc.invalidateQueries({ queryKey: ['pantry'] }),
   });
 
   const addToShoppingListMutation = useMutation({
@@ -131,6 +141,11 @@ export default function PantryPage() {
 
   return (
     <div className="max-w-2xl mx-auto px-4 py-6 pb-24 lg:pb-6 space-y-6">
+      <PageTutorial pageKey="pantry" steps={[
+        { title: 'Track your pantry', description: 'Add groceries you already have at home to avoid buying duplicates.' },
+        { title: 'Expiry alerts', description: 'Items expiring soon are highlighted in amber so you can use them first.' },
+        { title: 'Add to shopping', description: 'Use \'Add All to List\' to restock everything, or restock items individually.' },
+      ]} />
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold text-text-primary">Pantry</h1>

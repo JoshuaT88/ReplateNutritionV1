@@ -5,7 +5,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import {
   ShoppingCart, Plus, Sparkles, Trash2, Store, PlayCircle, Loader2,
   Search, ChevronDown, MapPin, DollarSign, AlertTriangle, Package, Pencil, Check, X,
-  Navigation, Calendar
+  Navigation, Calendar, Flag
 } from 'lucide-react';
 import { api } from '@/lib/api';
 import { Button } from '@/components/ui/button';
@@ -16,14 +16,20 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { EmptyState } from '@/components/shared/EmptyState';
 import { ErrorCard } from '@/components/shared/ErrorCard';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
+import { Label } from '@/components/ui/label';
+import { Textarea } from '@/components/ui/textarea';
 import { useToast } from '@/components/ui/toast';
 import { cn, formatCurrency } from '@/lib/utils';
+
+const KROGER_BANNERS = ['kroger','fred meyer','king soopers','ralphs',"smith's","fry's",'harris teeter','dillons',"baker's",'city market','gerbes','jay c','food 4 less','foods co','pick n save',"mariano's",'pay-less'];
+const isKrogerStore = (name: string) => { const l = name.toLowerCase(); return KROGER_BANNERS.some((b) => l.includes(b)); };
+import { PageTutorial } from '@/components/shared/PageTutorial';
 import type { ShoppingItem } from '@/types';
 
 const PRIORITY_COLORS: Record<string, string> = {
-  HIGH: 'bg-red-50 border-red-200 text-red-700',
-  MEDIUM: 'bg-amber-50 border-amber-200 text-amber-700',
-  LOW: 'bg-slate-50 border-slate-200 text-slate-600',
+  HIGH: 'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800/50 text-red-700 dark:text-red-300',
+  MEDIUM: 'bg-amber-50 dark:bg-amber-900/20 border-amber-200 dark:border-amber-800/50 text-amber-700 dark:text-amber-300',
+  LOW: 'bg-slate-50 dark:bg-[#283447]/60 border-slate-200 dark:border-[#374151] text-slate-600 dark:text-slate-300',
 };
 
 export default function ShoppingPage() {
@@ -48,17 +54,32 @@ export default function ShoppingPage() {
   const [newItemPriority, setNewItemPriority] = useState<'LOW' | 'MEDIUM' | 'HIGH'>('MEDIUM');
   const [newItemMeal, setNewItemMeal] = useState('');
   const [newItemNotes, setNewItemNotes] = useState('');
+  const [newItemDealNote, setNewItemDealNote] = useState('');
   const [newItemEstPrice, setNewItemEstPrice] = useState('');
   const [listStore, setListStore] = useState<string>(() => localStorage.getItem('list_store') || '');
   const [search, setSearch] = useState('');
+  const [filterStore, setFilterStore] = useState<string>('all');
   const [storeSearch, setStoreSearch] = useState('');
   const [customStoreAddress, setCustomStoreAddress] = useState('');
   const [zipCode, setZipCode] = useState('');
   const [budgetPromptDismissed] = useState(() => localStorage.getItem('budget_prompt_dismissed') === '1');
+  const [showReportModal, setShowReportModal] = useState(false);
+  const [reportingStore, setReportingStore] = useState<{ name: string; address: string } | null>(null);
+  const [reportCorrection, setReportCorrection] = useState('');
+  const [reportNotes, setReportNotes] = useState('');
+  const [showPantryWarning, setShowPantryWarning] = useState(false);
+  const [pantryConflictItem, setPantryConflictItem] = useState<string | null>(null);
+  const [showDuplicateWarning, setShowDuplicateWarning] = useState(false);
+  const [duplicateExistingItem, setDuplicateExistingItem] = useState<any | null>(null);
 
   const { data: shoppingList, isLoading, error, refetch } = useQuery({
     queryKey: ['shoppingList'],
     queryFn: () => api.getShoppingList(),
+  });
+
+  const { data: pantryItems } = useQuery({
+    queryKey: ['pantryItems'],
+    queryFn: () => api.getPantryItems(),
   });
 
   const { data: profiles } = useQuery({
@@ -70,6 +91,14 @@ export default function ShoppingPage() {
     queryKey: ['preferences'],
     queryFn: () => api.getPreferences(),
   });
+
+  // Pre-fill zip code from saved preferences
+  useEffect(() => {
+    if (preferences?.zipCode && !zipCode) {
+      setZipCode(preferences.zipCode);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [preferences?.zipCode]);
 
   const { data: mealPlans } = useQuery({
     queryKey: ['mealPlans'],
@@ -95,6 +124,7 @@ export default function ShoppingPage() {
       priority: newItemPriority,
       sourceRef: newItemMeal || undefined,
       notes: newItemNotes || undefined,
+      dealNote: newItemDealNote || undefined,
       estimatedPrice: newItemEstPrice ? parseFloat(newItemEstPrice) : undefined,
       assignedStore: listStore || undefined,
     }),
@@ -106,6 +136,7 @@ export default function ShoppingPage() {
       setNewItemPriority('MEDIUM');
       setNewItemMeal('');
       setNewItemNotes('');
+      setNewItemDealNote('');
       setNewItemEstPrice('');
       setShowAddItem(false);
       toast('success', 'Item added');
@@ -150,6 +181,23 @@ export default function ShoppingPage() {
     onError: (err: Error) => toast('error', 'Failed to start session', err.message),
   });
 
+  const reportAddressMutation = useMutation({
+    mutationFn: () => api.reportStoreAddress(
+      reportingStore!.name,
+      reportingStore!.address,
+      reportCorrection,
+      reportNotes || undefined,
+    ),
+    onSuccess: () => {
+      setShowReportModal(false);
+      setReportCorrection('');
+      setReportNotes('');
+      setReportingStore(null);
+      toast('success', 'Report submitted', 'Thanks! We\'ll review the address correction.');
+    },
+    onError: (err: Error) => toast('error', 'Failed to submit report', err.message),
+  });
+
   const tryStartSession = (storeName?: string, storeEstimate?: number) => {
     const tripBudget = preferences?.perTripBudgetAllocation || preferences?.budget || 0;
     const estimate = storeEstimate || totalEstimate || 0;
@@ -180,9 +228,11 @@ export default function ShoppingPage() {
   };
 
   const items = shoppingList || [];
-  const filtered = items.filter((item) =>
-    item.itemName.toLowerCase().includes(search.toLowerCase())
-  );
+  const filtered = items.filter((item) => {
+    const matchesSearch = item.itemName.toLowerCase().includes(search.toLowerCase());
+    const matchesStore = filterStore === 'all' || (item as any).assignedStore === filterStore || (!((item as any).assignedStore) && filterStore === 'unassigned');
+    return matchesSearch && matchesStore;
+  });
 
   // Group by assigned store, then by category within each store
   const groupedByStore = filtered.reduce<Record<string, typeof filtered>>((acc, item) => {
@@ -206,8 +256,52 @@ export default function ShoppingPage() {
   })();
   const budgetRemaining = monthlyBudget > 0 ? monthlyBudget - monthlySpent : 0;
 
+  // T80c: compute next shopping trip days away
+  const daysUntilNextTrip = (() => {
+    if (!preferences?.shoppingDay) return null;
+    const dayNames = ['sunday','monday','tuesday','wednesday','thursday','friday','saturday'];
+    const target = dayNames.indexOf(preferences.shoppingDay.toLowerCase());
+    if (target === -1) return null;
+    const now = new Date();
+    const diff = (target - now.getDay() + 7) % 7;
+    return diff === 0 ? 7 : diff;
+  })();
+  const pantryBannerKey = `pantry_banner_dismissed_${new Date().toISOString().slice(0, 7)}`;
+  const [pantryBannerDismissed, setPantryBannerDismissed] = useState(() =>
+    localStorage.getItem(pantryBannerKey) === '1'
+  );
+  const showPantryBanner =
+    !pantryBannerDismissed &&
+    daysUntilNextTrip !== null &&
+    daysUntilNextTrip <= 2 &&
+    pantryItems && pantryItems.length > 0;
+
   return (
     <div className="space-y-6">
+      {/* T75 Page Tutorial */}
+      <PageTutorial pageKey="shopping" steps={[
+        { title: 'Add items', description: 'Use \'Add Item\' to add groceries manually, or \'From Meals\' to generate from your meal plan.' },
+        { title: 'Find stores', description: 'Enter your ZIP code to compare estimated costs at nearby stores.' },
+        { title: 'Start shopping', description: 'Pick a store and tap \'Start Shopping\' to open a guided in-store session.' },
+      ]} />
+      {/* T80c Pre-shopping pantry banner */}
+      {showPantryBanner && (
+        <div className="flex items-center justify-between px-4 py-3 rounded-xl bg-emerald-50 border border-emerald-200">
+          <div className="flex items-center gap-2">
+            <Package className="h-4 w-4 text-emerald-600" />
+            <p className="text-sm font-medium text-emerald-800">
+              Your next shopping trip is in {daysUntilNextTrip} day{daysUntilNextTrip !== 1 ? 's' : ''} — check your pantry first!
+            </p>
+          </div>
+          <div className="flex gap-2">
+            <Button size="sm" variant="outline" onClick={() => navigate('/pantry')}>Review Pantry</Button>
+            <Button size="sm" variant="outline" onClick={() => {
+              localStorage.setItem(pantryBannerKey, '1');
+              setPantryBannerDismissed(true);
+            }}>Dismiss</Button>
+          </div>
+        </div>
+      )}
       {/* Budget setup prompt — shown once if budget/frequency not configured */}
       {!budgetPromptDismissed && preferences && (!preferences.budget || !preferences.shoppingFrequency) && (
         <div className="flex items-center justify-between px-4 py-3 rounded-xl bg-amber-50 border border-amber-200">
@@ -239,7 +333,7 @@ export default function ShoppingPage() {
             <select
               value={listStore}
               onChange={(e) => { setListStore(e.target.value); localStorage.setItem('list_store', e.target.value); }}
-              className="text-xs rounded-lg border border-card-border bg-white px-2 py-1 focus:outline-none focus:ring-2 focus:ring-primary/30"
+              className="text-xs rounded-lg border border-card-border dark:border-[#374151] bg-white dark:bg-[#283447] dark:text-[#F9FAFB] px-2 py-1 focus:outline-none focus:ring-2 focus:ring-primary/30"
             >
               <option value="">No store selected</option>
               {preferredStores.map((s) => (
@@ -369,15 +463,47 @@ export default function ShoppingPage() {
         </Card>
       )}
 
-      {/* Search */}
-      <div className="relative max-w-sm">
-        <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted" />
-        <input
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          placeholder="Search items..."
-          className="flex h-10 w-full rounded-xl border border-card-border bg-white pl-9 pr-3 py-2 text-sm transition-colors placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary"
-        />
+      {/* Search + Store filter */}
+      <div className="flex flex-col gap-2">
+        <div className="relative max-w-sm">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted" />
+          <input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search items..."
+            className="flex h-10 w-full rounded-xl border border-card-border dark:border-[#374151] bg-white dark:bg-[#283447] dark:text-[#F9FAFB] pl-9 pr-3 py-2 text-sm transition-colors placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary"
+          />
+        </div>
+        {preferredStores.length > 0 && (
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <span className="text-xs text-muted font-medium">Filter:</span>
+            <button
+              onClick={() => setFilterStore('all')}
+              className={cn(
+                'px-3 py-1 rounded-full text-xs font-medium border transition-all',
+                filterStore === 'all'
+                  ? 'border-primary bg-primary/10 text-primary dark:bg-primary/20'
+                  : 'border-card-border text-muted hover:border-slate-300 dark:hover:border-slate-500'
+              )}
+            >
+              All
+            </button>
+            {preferredStores.map((s) => (
+              <button
+                key={s}
+                onClick={() => setFilterStore(filterStore === s ? 'all' : s)}
+                className={cn(
+                  'px-3 py-1 rounded-full text-xs font-medium border transition-all',
+                  filterStore === s
+                    ? 'border-primary bg-primary/10 text-primary dark:bg-primary/20'
+                    : 'border-card-border text-muted hover:border-slate-300 dark:hover:border-slate-500'
+                )}
+              >
+                {s}
+              </button>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* List */}
@@ -407,33 +533,17 @@ export default function ShoppingPage() {
             if (a === 'Unassigned') return 1;
             if (b === 'Unassigned') return -1;
             return a.localeCompare(b);
-          }).map(([storeName, storeItems]) => {
-            const byCategory = storeItems.reduce<Record<string, typeof storeItems>>((acc, item) => {
-              const cat = item.category || 'Uncategorized';
-              if (!acc[cat]) acc[cat] = [];
-              acc[cat].push(item);
-              return acc;
-            }, {});
-            return (
-              <div key={storeName} className="space-y-3">
-                {Object.keys(groupedByStore).length > 1 && (
-                  <div className="flex items-center gap-2">
-                    <Store className="h-3.5 w-3.5 text-muted" />
-                    <span className="text-xs font-semibold uppercase tracking-wider text-muted">{storeName}</span>
-                  </div>
-                )}
-                {Object.entries(byCategory).sort(([a], [b]) => a.localeCompare(b)).map(([category, catItems]) => (
-                  <CategoryGroup
-                    key={`${storeName}-${category}`}
-                    category={category}
-                    items={catItems}
-                    onRemove={(id) => removeItemMutation.mutate(id)}
-                    onUpdate={(id, data) => updateItemMutation.mutate({ id, data })}
-                  />
-                ))}
-              </div>
-            );
-          })}
+          }).map(([storeName, storeItems]) => (
+              <StoreGroup
+                key={storeName}
+                storeName={storeName}
+                storeItems={storeItems}
+                onRemove={(id) => removeItemMutation.mutate(id)}
+                onUpdate={(id, data) => updateItemMutation.mutate({ id, data })}
+                preferredStores={preferredStores}
+                showHeader={true}
+              />
+          ))}
         </div>
       )}
 
@@ -517,8 +627,7 @@ export default function ShoppingPage() {
                   onChange={(e) => setNewItemEstPrice(e.target.value)}
                 />
               </div>
-              {preferredStores.length > 0 && (
-                <div>
+              <div>
                   <label className="text-xs font-medium text-muted block mb-1">Assign to store</label>
                   <select
                     value={listStore}
@@ -531,7 +640,6 @@ export default function ShoppingPage() {
                     ))}
                   </select>
                 </div>
-              )}
             </div>
             <div>
               <label className="text-xs font-medium text-muted block mb-1">Notes (optional)</label>
@@ -541,10 +649,43 @@ export default function ShoppingPage() {
                 onChange={(e) => setNewItemNotes(e.target.value)}
               />
             </div>
+            <div>
+              <label className="text-xs font-medium text-muted block mb-1">Deal / Coupon / Promo (optional)</label>
+              <Input
+                placeholder="e.g. Buy 1 Get 1 Free, $0.50 off coupon"
+                value={newItemDealNote}
+                onChange={(e) => setNewItemDealNote(e.target.value)}
+              />
+            </div>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setShowAddItem(false)}>Cancel</Button>
-            <Button onClick={() => addItemMutation.mutate()} disabled={!newItemName.trim() || addItemMutation.isPending}>
+            <Button
+              onClick={() => {
+                // Check for duplicate in current list (same name + same assigned store)
+                const duplicate = items.find((i) =>
+                  i.itemName.toLowerCase().trim() === newItemName.toLowerCase().trim() &&
+                  ((i as any).assignedStore || '') === (listStore || '')
+                );
+                if (duplicate) {
+                  setDuplicateExistingItem(duplicate);
+                  setShowDuplicateWarning(true);
+                  return;
+                }
+                // T80a: Check pantry for same/similar item before adding
+                const match = pantryItems?.find((p: any) =>
+                  p.itemName.toLowerCase().includes(newItemName.toLowerCase().trim()) ||
+                  newItemName.toLowerCase().trim().includes(p.itemName.toLowerCase())
+                );
+                if (match) {
+                  setPantryConflictItem(match.itemName);
+                  setShowPantryWarning(true);
+                } else {
+                  addItemMutation.mutate();
+                }
+              }}
+              disabled={!newItemName.trim() || addItemMutation.isPending}
+            >
               {addItemMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Add'}
             </Button>
           </DialogFooter>
@@ -616,7 +757,7 @@ export default function ShoppingPage() {
                     .map((store: any, idx: number) => {
                       const realIdx = stores.indexOf(store);
                       return (
-                  <div key={store.placeId || store.name} className="rounded-xl border border-card-border overflow-hidden">
+                  <div key={store.placeId || `${store.name}-${idx}`} className="rounded-xl border border-card-border overflow-hidden">
                     <button
                       onClick={() => setSelectedStoreIdx(selectedStoreIdx === realIdx ? null : realIdx)}
                       className={cn(
@@ -689,6 +830,22 @@ export default function ShoppingPage() {
                                 : <><PlayCircle className="h-3.5 w-3.5" /> Start Shopping at {store.name}</>
                               }
                             </Button>
+                            {/* T70/T71: Kroger live pricing badge or fallback */}
+                            <div className="mt-2 pt-2 border-t border-slate-100">
+                              {isKrogerStore(store.name) ? (
+                                <div className="flex items-center gap-1.5 text-[11px] text-emerald-700">
+                                  <span className="inline-flex items-center gap-1 bg-emerald-50 border border-emerald-200 rounded-full px-2 py-0.5 font-medium">
+                                    <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 inline-block" />
+                                    Live pricing available
+                                  </span>
+                                  <span className="text-muted">via Kroger API</span>
+                                </div>
+                              ) : (
+                                <p className="text-[11px] text-muted italic">
+                                  Live pricing not available for this store.
+                                </p>
+                              )}
+                            </div>
                             {/* Get Directions button (T27) */}
                             {store.address && (
                               <a
@@ -699,6 +856,20 @@ export default function ShoppingPage() {
                               >
                                 <Navigation className="h-3.5 w-3.5" /> Get Directions
                               </a>
+                            )}
+                            {/* Report incorrect address (T64) */}
+                            {store.address && (
+                              <button
+                                onClick={() => {
+                                  setReportingStore({ name: store.name, address: store.address });
+                                  setReportCorrection('');
+                                  setReportNotes('');
+                                  setShowReportModal(true);
+                                }}
+                                className="flex items-center justify-center gap-1 w-full mt-1 py-1 text-[11px] text-muted/70 hover:text-muted transition-colors"
+                              >
+                                <Flag className="h-3 w-3" /> Report incorrect address
+                              </button>
                             )}
                           </div>
                         </motion.div>
@@ -742,6 +913,63 @@ export default function ShoppingPage() {
               <p className="text-sm text-muted text-center py-4">No stores found near this ZIP code.</p>
             )}
           </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Report Incorrect Address Modal (T64) */}
+      <Dialog open={showReportModal} onOpenChange={(open) => {
+        setShowReportModal(open);
+        if (!open) { setReportCorrection(''); setReportNotes(''); setReportingStore(null); }
+      }}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Flag className="h-4 w-4 text-amber-500" /> Report Incorrect Address
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 my-2">
+            <div>
+              <Label className="text-xs text-muted">Store</Label>
+              <p className="text-sm font-medium mt-0.5">{reportingStore?.name}</p>
+            </div>
+            <div>
+              <Label className="text-xs text-muted">Current address on file</Label>
+              <p className="text-sm mt-0.5 text-red-600">{reportingStore?.address}</p>
+            </div>
+            <div>
+              <Label htmlFor="report-correction" className="text-xs font-medium">Correct address <span className="text-red-500">*</span></Label>
+              <Input
+                id="report-correction"
+                value={reportCorrection}
+                onChange={(e) => setReportCorrection(e.target.value)}
+                placeholder="Enter the correct address"
+                className="mt-1"
+              />
+            </div>
+            <div>
+              <Label htmlFor="report-notes" className="text-xs font-medium">Notes (optional)</Label>
+              <Textarea
+                id="report-notes"
+                value={reportNotes}
+                onChange={(e) => setReportNotes(e.target.value)}
+                placeholder="Additional details about the correction…"
+                className="mt-1 resize-none text-sm"
+                rows={2}
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" size="sm" onClick={() => setShowReportModal(false)}>Cancel</Button>
+            <Button
+              size="sm"
+              onClick={() => reportAddressMutation.mutate()}
+              disabled={!reportCorrection.trim() || reportAddressMutation.isPending}
+            >
+              {reportAddressMutation.isPending
+                ? <><Loader2 className="h-3.5 w-3.5 animate-spin" /> Submitting…</>
+                : 'Submit Report'}
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
 
@@ -794,42 +1022,446 @@ export default function ShoppingPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* T80b Pantry Conflict Warning */}
+      {/* Duplicate item warning */}
+      <Dialog open={showDuplicateWarning} onOpenChange={setShowDuplicateWarning}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <AlertTriangle className="h-5 w-5 text-amber-500" /> Item Already in List
+            </DialogTitle>
+          </DialogHeader>
+          <div className="my-4 space-y-2">
+            <p className="text-sm text-muted">
+              <strong className="text-foreground">{newItemName}</strong> is already on your shopping list
+              {duplicateExistingItem?.assignedStore ? ` for ${duplicateExistingItem.assignedStore}` : ''}.
+              Would you like to increase the quantity instead?
+            </p>
+            <p className="text-xs text-muted">
+              Current quantity: <strong className="text-foreground">{duplicateExistingItem?.quantity || 1}</strong>
+            </p>
+          </div>
+          <DialogFooter className="gap-2 flex-wrap">
+            <Button variant="outline" onClick={() => { setShowDuplicateWarning(false); setDuplicateExistingItem(null); }}>
+              Cancel
+            </Button>
+            <Button variant="outline" onClick={() => {
+              setShowDuplicateWarning(false);
+              setDuplicateExistingItem(null);
+              addItemMutation.mutate();
+            }}>
+              Add Separately
+            </Button>
+            <Button onClick={() => {
+              if (duplicateExistingItem) {
+                const currentQty = parseInt(String(duplicateExistingItem.quantity || '1'));
+                const addQty = parseInt(newItemQty || '1');
+                updateItemMutation.mutate({
+                  id: duplicateExistingItem.id,
+                  data: { quantity: String(currentQty + addQty) },
+                });
+              }
+              setShowDuplicateWarning(false);
+              setDuplicateExistingItem(null);
+              setShowAddItem(false);
+              setNewItemName('');
+              setNewItemQty('1');
+            }}>
+              Increase Quantity
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={showPantryWarning} onOpenChange={setShowPantryWarning}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <AlertTriangle className="h-5 w-5 text-amber-500" /> Item May Already Be In Pantry
+            </DialogTitle>
+          </DialogHeader>
+          <div className="my-4">
+            <p className="text-sm text-muted">
+              You already have <strong className="text-foreground">{pantryConflictItem}</strong> in your pantry.
+              Do you still want to add <strong className="text-foreground">{newItemName}</strong> to your shopping list?
+            </p>
+          </div>
+          <DialogFooter className="gap-2 flex-wrap">
+            <Button variant="outline" onClick={() => navigate('/pantry')}>Set Up Pantry</Button>
+            <Button variant="outline" onClick={() => { setShowPantryWarning(false); setPantryConflictItem(null); }}>Cancel</Button>
+            <Button onClick={() => { setShowPantryWarning(false); setPantryConflictItem(null); addItemMutation.mutate(); }}>
+              Skip, Add Anyway
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
 
-function CategoryGroup({ category, items, onRemove, onUpdate }: {
-  category: string;
-  items: any[];
+function StoreGroup({ storeName, storeItems, onRemove, onUpdate, preferredStores, showHeader }: {
+  storeName: string;
+  storeItems: any[];
   onRemove: (id: string) => void;
   onUpdate: (id: string, data: any) => void;
+  preferredStores: string[];
+  showHeader: boolean;
 }) {
-  const [collapsed, setCollapsed] = useState(false);
-  const [editingId, setEditingId] = useState<string | null>(null);
+  const { toast } = useToast();
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [showMoveDropdown, setShowMoveDropdown] = useState(false);
+  const [editingItem, setEditingItem] = useState<any | null>(null);
   const [editName, setEditName] = useState('');
   const [editQty, setEditQty] = useState('');
   const [editPriority, setEditPriority] = useState<string>('MEDIUM');
   const [editNotes, setEditNotes] = useState('');
+  const [editCategory, setEditCategory] = useState('');
+  const [editEstPrice, setEditEstPrice] = useState('');
+  const [editSourceRef, setEditSourceRef] = useState('');
+  const [editAssignedStore, setEditAssignedStore] = useState('');
+  const [validatingPriceIds, setValidatingPriceIds] = useState<Set<string>>(new Set());
+  const [validatingLocationIds, setValidatingLocationIds] = useState<Set<string>>(new Set());
 
-  const startEdit = (item: any) => {
-    setEditingId(item.id);
+  const allIds = storeItems.map((i) => i.id);
+  const allSelected = allIds.length > 0 && allIds.every((id) => selectedIds.has(id));
+  const someSelected = selectedIds.size > 0 && !allSelected;
+
+  const toggleSelectAll = () => {
+    if (allSelected) {
+      setSelectedIds(new Set());
+    } else {
+      setSelectedIds(new Set(allIds));
+    }
+  };
+
+  const toggleSelect = (id: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
+
+  const clearSelection = () => { setSelectedIds(new Set()); setShowMoveDropdown(false); };
+
+  const openEdit = () => {
+    const id = Array.from(selectedIds)[0];
+    const item = storeItems.find((i) => i.id === id);
+    if (!item) return;
+    setEditingItem(item);
     setEditName(item.itemName);
-    setEditQty(item.quantity || '1');
+    setEditQty(String(item.quantity || '1'));
     setEditPriority(item.priority || 'MEDIUM');
     setEditNotes(item.notes || '');
+    setEditCategory(item.category || '');
+    setEditEstPrice(item.estimatedPrice != null ? String(item.estimatedPrice) : '');
+    setEditSourceRef(item.sourceRef || '');
+    setEditAssignedStore(item.assignedStore || '');
   };
 
   const saveEdit = () => {
-    if (editingId) {
-      onUpdate(editingId, {
-        itemName: editName,
-        quantity: editQty,
-        priority: editPriority,
-        notes: editNotes || null,
-      });
-      setEditingId(null);
-    }
+    if (!editingItem) return;
+    onUpdate(editingItem.id, {
+      itemName: editName,
+      quantity: editQty,
+      priority: editPriority,
+      notes: editNotes || null,
+      category: editCategory || null,
+      estimatedPrice: editEstPrice ? parseFloat(editEstPrice) : null,
+      sourceRef: editSourceRef || null,
+      assignedStore: editAssignedStore || null,
+    });
+    setEditingItem(null);
+    clearSelection();
   };
+
+  const handleDeleteSelected = () => {
+    Array.from(selectedIds).forEach((id) => onRemove(id));
+    clearSelection();
+  };
+
+  const handleMoveSelected = (targetStore: string) => {
+    Array.from(selectedIds).forEach((id) => onUpdate(id, { assignedStore: targetStore || null }));
+    clearSelection();
+  };
+
+  const handleValidatePrice = async () => {
+    const ids = Array.from(selectedIds);
+    setValidatingPriceIds(new Set(ids));
+    let updated = 0;
+    await Promise.all(ids.map(async (id) => {
+      const item = storeItems.find((i) => i.id === id);
+      if (!item) return;
+      try {
+        const result = await api.getPriceEstimate(item.itemName, storeName !== 'Unassigned' ? storeName : undefined);
+        if (result.estimatedPrice != null) {
+          onUpdate(id, { estimatedPrice: result.estimatedPrice });
+          updated++;
+        }
+      } catch { /* skip */ }
+    }));
+    setValidatingPriceIds(new Set());
+    toast('success', `Price refreshed for ${updated} item${updated !== 1 ? 's' : ''}`);
+  };
+
+  const handleValidateLocation = async () => {
+    const ids = Array.from(selectedIds);
+    setValidatingLocationIds(new Set(ids));
+    let updated = 0;
+    await Promise.all(ids.map(async (id) => {
+      const item = storeItems.find((i) => i.id === id);
+      if (!item) return;
+      try {
+        const result = await api.predictAisleLocation(item.itemName, storeName !== 'Unassigned' ? storeName : 'Generic');
+        if (result.aisle) {
+          onUpdate(id, { aisleHint: result.aisle });
+          updated++;
+        }
+      } catch { /* skip */ }
+    }));
+    setValidatingLocationIds(new Set());
+    toast('success', `Location updated for ${updated} item${updated !== 1 ? 's' : ''}`);
+  };
+
+  const byCategory = storeItems.reduce<Record<string, any[]>>((acc, item) => {
+    const cat = item.category || 'Uncategorized';
+    if (!acc[cat]) acc[cat] = [];
+    acc[cat].push(item);
+    return acc;
+  }, {});
+
+  const validatingAny = validatingPriceIds.size > 0 || validatingLocationIds.size > 0;
+
+  return (
+    <div className="space-y-0 rounded-2xl border border-card-border overflow-hidden">
+      {/* Store header card — always visible */}
+      <div className="bg-surface">
+        {/* Row 1: store name + select all */}
+        <div className="flex items-center justify-between px-4 py-2.5 border-b border-card-border">
+          <div className="flex items-center gap-2">
+            <Store className="h-3.5 w-3.5 text-muted shrink-0" />
+            <span className="text-xs font-semibold uppercase tracking-wider text-muted">{storeName === 'Unassigned' ? 'No Store Assigned' : storeName}</span>
+            <span className="text-[10px] text-muted bg-slate-100 dark:bg-[#283447] rounded-full px-2 py-0.5">{storeItems.length}</span>
+          </div>
+          {/* Select All toggle */}
+          <button
+            onClick={toggleSelectAll}
+            className="flex items-center gap-1.5 text-[11px] text-muted hover:text-primary transition-colors font-medium"
+          >
+            <div className={cn(
+              'h-3.5 w-3.5 rounded-sm border-2 flex items-center justify-center transition-colors',
+              allSelected ? 'bg-primary border-primary' : someSelected ? 'bg-primary/30 border-primary' : 'border-current'
+            )}>
+              {allSelected && <Check className="h-2 w-2 text-white" />}
+              {someSelected && <span className="w-1.5 h-0.5 bg-primary rounded-full block" />}
+            </div>
+            Select all
+          </button>
+        </div>
+
+        {/* Row 2: action bar — only when items are selected */}
+        {selectedIds.size > 0 && (
+          <div className="flex items-center gap-1.5 px-4 py-2 bg-primary/5 border-b border-primary/20 flex-wrap">
+            <span className="text-xs font-semibold text-primary shrink-0 mr-1">
+              {selectedIds.size} selected
+            </span>
+
+            {/* Edit — only when 1 item selected */}
+            {selectedIds.size === 1 && (
+              <Button size="sm" variant="outline" className="h-7 text-[11px] gap-1 px-2.5" onClick={openEdit}>
+                <Pencil className="h-3 w-3" /> Edit
+              </Button>
+            )}
+
+            {/* Validate Price */}
+            <Button
+              size="sm"
+              variant="outline"
+              className="h-7 text-[11px] gap-1 px-2.5"
+              onClick={handleValidatePrice}
+              disabled={validatingAny}
+            >
+              {validatingPriceIds.size > 0 ? <Loader2 className="h-3 w-3 animate-spin" /> : <DollarSign className="h-3 w-3" />}
+              Validate Price
+            </Button>
+
+            {/* Validate Location */}
+            <Button
+              size="sm"
+              variant="outline"
+              className="h-7 text-[11px] gap-1 px-2.5"
+              onClick={handleValidateLocation}
+              disabled={validatingAny}
+            >
+              {validatingLocationIds.size > 0 ? <Loader2 className="h-3 w-3 animate-spin" /> : <MapPin className="h-3 w-3" />}
+              Validate Location
+            </Button>
+
+            {/* Move to Store */}
+            {preferredStores.length > 0 && (
+              <div className="relative">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="h-7 text-[11px] gap-1 px-2.5"
+                  onClick={() => setShowMoveDropdown((v) => !v)}
+                >
+                  <Store className="h-3 w-3" /> Move <ChevronDown className="h-3 w-3" />
+                </Button>
+                {showMoveDropdown && (
+                  <div className="absolute top-8 left-0 z-20 bg-white dark:bg-[#283447] border border-card-border rounded-xl shadow-lg py-1 min-w-[160px]">
+                    <p className="text-[10px] font-semibold text-muted px-3 pt-1 pb-0.5">Move to store</p>
+                    <button
+                      onClick={() => handleMoveSelected('')}
+                      className="block w-full text-left text-xs px-3 py-2 hover:bg-surface-hover"
+                    >
+                      No store
+                    </button>
+                    {preferredStores.filter((s) => s !== storeName).map((s) => (
+                      <button
+                        key={s}
+                        onClick={() => handleMoveSelected(s)}
+                        className="block w-full text-left text-xs px-3 py-2 hover:bg-surface-hover"
+                      >
+                        {s}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Delete */}
+            <Button
+              size="sm"
+              variant="outline"
+              className="h-7 text-[11px] gap-1 px-2.5 text-red-600 border-red-200 dark:border-red-800 hover:bg-red-50 dark:hover:bg-red-900/20"
+              onClick={handleDeleteSelected}
+            >
+              <Trash2 className="h-3 w-3" /> Delete
+            </Button>
+
+            {/* Clear */}
+            <button
+              onClick={clearSelection}
+              className="ml-auto h-7 w-7 flex items-center justify-center rounded hover:bg-surface-hover text-muted"
+              title="Clear selection"
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          </div>
+        )}
+      </div>
+
+      {/* Category groups */}
+      <div className="space-y-0 divide-y divide-card-border">
+        {Object.entries(byCategory).sort(([a], [b]) => a.localeCompare(b)).map(([category, catItems]) => (
+          <CategoryGroup
+            key={`${storeName}-${category}`}
+            category={category}
+            items={catItems}
+            onRemove={onRemove}
+            onUpdate={onUpdate}
+            preferredStores={preferredStores}
+            selectedIds={selectedIds}
+            onToggleSelect={toggleSelect}
+            validatingPriceIds={validatingPriceIds}
+            validatingLocationIds={validatingLocationIds}
+          />
+        ))}
+      </div>
+
+      {/* Fine print footer */}
+      <div className="px-4 py-2 bg-slate-50 dark:bg-[#1e2a38] border-t border-card-border">
+        <p className="text-[10px] text-muted/70 text-center">
+          Select items using the checkboxes to edit, delete, validate prices, update in-store locations, or move between stores.
+        </p>
+      </div>
+
+      {/* Edit Dialog */}
+      <Dialog open={!!editingItem} onOpenChange={(open) => { if (!open) setEditingItem(null); }}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Pencil className="h-4 w-4" /> Edit Item
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3 my-3">
+            <Input value={editName} onChange={(e) => setEditName(e.target.value)} placeholder="Item name" />
+            <div className="grid grid-cols-2 gap-2">
+              <Input value={editQty} onChange={(e) => setEditQty(e.target.value)} placeholder="Quantity" type="number" min="1" />
+              <select
+                value={editPriority}
+                onChange={(e) => setEditPriority(e.target.value)}
+                className="h-10 rounded-xl border border-card-border dark:border-[#374151] dark:bg-[#283447] dark:text-white bg-white px-3 text-sm"
+              >
+                <option value="LOW">Low</option>
+                <option value="MEDIUM">Medium</option>
+                <option value="HIGH">High</option>
+              </select>
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <select
+                value={editCategory}
+                onChange={(e) => setEditCategory(e.target.value)}
+                className="h-10 rounded-xl border border-card-border dark:border-[#374151] dark:bg-[#283447] dark:text-white bg-white px-3 text-sm w-full"
+              >
+                <option value="">Category (auto)</option>
+                {['Produce','Dairy','Meat & Seafood','Pantry','Bakery','Frozen','Beverages','Snacks','Condiments','Pet Food','Other'].map((c) => (
+                  <option key={c} value={c}>{c}</option>
+                ))}
+              </select>
+              <Input
+                value={editEstPrice}
+                onChange={(e) => setEditEstPrice(e.target.value.replace(/[^0-9.]/g, ''))}
+                placeholder="Est. price ($)"
+                type="number"
+                min="0"
+                step="0.01"
+              />
+            </div>
+            <Input value={editNotes} onChange={(e) => setEditNotes(e.target.value)} placeholder="Notes (optional)" />
+            <div className="grid grid-cols-2 gap-2">
+              <Input value={editSourceRef} onChange={(e) => setEditSourceRef(e.target.value)} placeholder="For meal (optional)" />
+              {preferredStores.length > 0 ? (
+                <select
+                  value={editAssignedStore}
+                  onChange={(e) => setEditAssignedStore(e.target.value)}
+                  className="h-10 rounded-xl border border-card-border dark:border-[#374151] dark:bg-[#283447] dark:text-white bg-white px-3 text-sm"
+                >
+                  <option value="">No store</option>
+                  {preferredStores.map((s) => <option key={s} value={s}>{s}</option>)}
+                </select>
+              ) : (
+                <Input value={editAssignedStore} onChange={(e) => setEditAssignedStore(e.target.value)} placeholder="Assign to store" />
+              )}
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setEditingItem(null)}>Cancel</Button>
+            <Button onClick={saveEdit} disabled={!editName.trim()}>
+              <Check className="h-3.5 w-3.5" /> Save
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}
+
+function CategoryGroup({ category, items, onRemove, onUpdate, preferredStores = [], selectedIds, onToggleSelect, validatingPriceIds, validatingLocationIds }: {
+  category: string;
+  items: any[];
+  onRemove: (id: string) => void;
+  onUpdate: (id: string, data: any) => void;
+  preferredStores?: string[];
+  selectedIds?: Set<string>;
+  onToggleSelect?: (id: string) => void;
+  validatingPriceIds?: Set<string>;
+  validatingLocationIds?: Set<string>;
+}) {
+  const [collapsed, setCollapsed] = useState(true);
 
   return (
     <Card>
@@ -853,93 +1485,69 @@ function CategoryGroup({ category, items, onRemove, onUpdate }: {
             exit={{ height: 0, opacity: 0 }}
             className="overflow-hidden"
           >
-            <div className="px-5 pb-4 space-y-1.5">
-              {items.map((item) => (
-                <div key={item.id}>
-                  {editingId === item.id ? (
-                    <div className="px-3 py-3 rounded-xl border border-primary/30 bg-primary/5 space-y-2">
-                      <Input
-                        value={editName}
-                        onChange={(e) => setEditName(e.target.value)}
-                        placeholder="Item name"
-                        className="text-sm h-8"
-                      />
-                      <div className="grid grid-cols-2 gap-2">
-                        <Input
-                          value={editQty}
-                          onChange={(e) => setEditQty(e.target.value)}
-                          placeholder="Quantity"
-                          className="text-sm h-8"
-                        />
-                        <select
-                          value={editPriority}
-                          onChange={(e) => setEditPriority(e.target.value)}
-                          className="text-sm h-8 rounded-xl border border-card-border bg-white px-2"
-                        >
-                          <option value="LOW">Low</option>
-                          <option value="MEDIUM">Medium</option>
-                          <option value="HIGH">High</option>
-                        </select>
-                      </div>
-                      <Input
-                        value={editNotes}
-                        onChange={(e) => setEditNotes(e.target.value)}
-                        placeholder="Notes (optional)"
-                        className="text-sm h-8"
-                      />
-                      <div className="flex gap-2">
-                        <Button size="sm" className="h-7 text-xs" onClick={saveEdit}>
-                          <Check className="h-3 w-3" /> Save
-                        </Button>
-                        <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => setEditingId(null)}>
-                          <X className="h-3 w-3" /> Cancel
-                        </Button>
-                      </div>
-                    </div>
-                  ) : (
+            <div className="px-4 pb-3 space-y-1.5">
+              {items.map((item) => {
+                const isPriceValidating = validatingPriceIds?.has(item.id);
+                const isLocationValidating = validatingLocationIds?.has(item.id);
+                return (
+                  <div
+                    key={item.id}
+                    className={cn(
+                      'flex items-center gap-2.5 px-3 py-2.5 rounded-xl border transition-all',
+                      PRIORITY_COLORS[item.priority] || PRIORITY_COLORS.MEDIUM,
+                      selectedIds?.has(item.id) && 'ring-2 ring-primary/40'
+                    )}
+                  >
+                    {/* Square checkbox */}
                     <div
+                      onClick={(e) => { e.stopPropagation(); onToggleSelect?.(item.id); }}
                       className={cn(
-                        'flex items-center gap-3 px-3 py-2.5 rounded-xl border transition-all',
-                        PRIORITY_COLORS[item.priority] || PRIORITY_COLORS.MEDIUM
+                        'h-4 w-4 rounded-sm border-2 flex-shrink-0 flex items-center justify-center cursor-pointer transition-colors',
+                        selectedIds?.has(item.id) ? 'bg-primary border-primary' : 'border-current opacity-40 hover:opacity-80'
                       )}
                     >
-                      <div className="flex-1 min-w-0">
+                      {selectedIds?.has(item.id) && <Check className="h-2.5 w-2.5 text-white" />}
+                    </div>
+
+                    {/* Item content */}
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2">
                         <p className="text-sm font-medium">{item.itemName}</p>
-                        <div className="flex items-center gap-2 mt-0.5 text-[10px] text-muted">
-                          <span>Qty: {item.quantity || 1}</span>
-                          {item.unit && <span>· {item.unit}</span>}
-                          {item.estimatedPrice && (
-                            <span className="flex items-center gap-0.5">
-                              <DollarSign className="h-3 w-3" /> ~{formatCurrency(item.estimatedPrice)}
-                            </span>
-                          )}
-                          {item.confidence && item.confidence < 0.5 && (
-                            <span className="flex items-center gap-0.5 text-amber-600">
-                              <AlertTriangle className="h-3 w-3" /> Low confidence
-                            </span>
-                          )}
-                        </div>
-                        {item.notes && (
-                          <p className="text-[10px] text-muted mt-0.5 italic">{item.notes}</p>
-                        )}
-                        {item.sourceRef && (
-                          <p className="text-[10px] text-primary mt-0.5 font-medium">🍽 {item.sourceRef}</p>
-                        )}
-                        {item.aisleHint && (
-                          <p className="text-[10px] text-muted mt-0.5">Aisle: {item.aisleHint}</p>
+                        {(isPriceValidating || isLocationValidating) && (
+                          <Loader2 className="h-3 w-3 animate-spin text-primary shrink-0" />
                         )}
                       </div>
-                      <Badge variant="outline" className="text-[10px] capitalize">{item.priority?.toLowerCase()}</Badge>
-                      <Button size="icon" variant="ghost" className="h-7 w-7 shrink-0" onClick={() => startEdit(item)}>
-                        <Pencil className="h-3.5 w-3.5 text-muted" />
-                      </Button>
-                      <Button size="icon" variant="ghost" className="h-7 w-7 shrink-0" onClick={() => onRemove(item.id)}>
-                        <Trash2 className="h-3.5 w-3.5 text-muted" />
-                      </Button>
+                      <div className="flex items-center gap-2 mt-0.5 text-[10px] text-muted flex-wrap">
+                        <span>Qty: {item.quantity || 1}</span>
+                        {item.unit && <span>· {item.unit}</span>}
+                        {item.estimatedPrice != null && (
+                          <span className="flex items-center gap-0.5">
+                            <DollarSign className="h-3 w-3" /> ~{formatCurrency(item.estimatedPrice)}
+                          </span>
+                        )}
+                        {item.aisleHint && (
+                          <span className="flex items-center gap-0.5">
+                            <MapPin className="h-3 w-3" /> {item.aisleHint}
+                          </span>
+                        )}
+                        {item.confidence && item.confidence < 0.5 && (
+                          <span className="flex items-center gap-0.5 text-amber-600">
+                            <AlertTriangle className="h-3 w-3" /> Low confidence
+                          </span>
+                        )}
+                      </div>
+                      {item.notes && (
+                        <p className="text-[10px] text-muted mt-0.5 italic">{item.notes}</p>
+                      )}
+                      {item.sourceRef && (
+                        <p className="text-[10px] text-primary mt-0.5 font-medium">🍽 {item.sourceRef}</p>
+                      )}
                     </div>
-                  )}
-                </div>
-              ))}
+
+                    <Badge variant="outline" className="text-[10px] capitalize shrink-0">{item.priority?.toLowerCase()}</Badge>
+                  </div>
+                );
+              })}
             </div>
           </motion.div>
         )}

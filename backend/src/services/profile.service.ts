@@ -1,5 +1,6 @@
 import prisma from '../config/database.js';
 import { AppError } from '../middleware/errorHandler.js';
+import { invalidateRecCache } from './recommendation.service.js';
 
 export async function getProfiles(userId: string) {
   return prisma.profile.findMany({
@@ -28,10 +29,12 @@ export async function updateProfile(userId: string, profileId: string, data: any
   });
   if (!profile) throw new AppError(404, 'Profile not found');
 
-  return prisma.profile.update({
+  const updated = await prisma.profile.update({
     where: { id: profileId },
     data,
   });
+  invalidateRecCache(profileId).catch(() => {});
+  return updated;
 }
 
 export async function deleteProfile(userId: string, profileId: string) {

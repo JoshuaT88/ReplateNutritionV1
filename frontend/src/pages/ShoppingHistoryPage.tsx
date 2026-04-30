@@ -3,38 +3,123 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   History, ShoppingCart, MapPin, Clock, DollarSign, ChevronDown,
-  Check, X, TrendingUp, TrendingDown, Minus, Upload, ScanLine, Timer
+  Check, X, TrendingUp, TrendingDown, Minus, Upload, ScanLine, Timer,
+  Trash2, Filter, Loader2
 } from 'lucide-react';
 import { api } from '@/lib/api';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
+import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
 import { EmptyState } from '@/components/shared/EmptyState';
 import { ErrorCard } from '@/components/shared/ErrorCard';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { useToast } from '@/components/ui/toast';
 import { cn, formatCurrency, formatDate } from '@/lib/utils';
 import { fmtDuration } from '@/lib/time';
 
 export default function ShoppingHistoryPage() {
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
   const { data: history, isLoading, error, refetch } = useQuery({
     queryKey: ['shoppingHistory'],
     queryFn: () => api.getShoppingHistory(),
   });
 
-  const trips = history || [];
+  // Filters
+  const [filterStore, setFilterStore] = useState('');
+  const [filterDateRange, setFilterDateRange] = useState<'all' | '7d' | '30d' | '90d'>('all');
+  const [filterSort, setFilterSort] = useState<'recent' | 'cost_asc' | 'cost_desc'>('recent');
 
-  // Summary stats
+  // Delete with reason
+  const [deleteTarget, setDeleteTarget] = useState<{ id: string; storeName: string } | null>(null);
+  const [deleteReason, setDeleteReason] = useState('');
+
+  const deleteMutation = useMutation({
+    mutationFn: ({ id, reason }: { id: string; reason: string }) =>
+      api.deleteShoppingHistory(id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['shoppingHistory'] });
+      toast('success', 'Trip deleted');
+      setDeleteTarget(null);
+      setDeleteReason('');
+    },
+    onError: (err: Error) => toast('error', 'Delete failed', err.message),
+  });
+
+  const allTrips: any[] = history || [];
+
+  // Apply filters
+  const now = Date.now();
+  const trips = allTrips
+    .filter((t) => {
+      if (filterStore && !t.storeName?.toLowerCase().includes(filterStore.toLowerCase())) return false;
+      if (filterDateRange !== 'all') {
+        const days = filterDateRange === '7d' ? 7 : filterDateRange === '30d' ? 30 : 90;
+        const tripDate = new Date(t.shoppingDate).getTime();
+        if (now - tripDate > days * 86400 * 1000) return false;
+      }
+      return true;
+    })
+    .sort((a, b) => {
+      if (filterSort === 'cost_asc') return (a.actualCost || 0) - (b.actualCost || 0);
+      if (filterSort === 'cost_desc') return (b.actualCost || 0) - (a.actualCost || 0);
+      return new Date(b.shoppingDate).getTime() - new Date(a.shoppingDate).getTime();
+    });
+
+  // Summary stats (from filtered trips)
   const totalSpent = trips.reduce((sum: number, t: any) => sum + (t.actualCost || 0), 0);
   const totalTrips = trips.length;
   const avgPerTrip = totalTrips > 0 ? totalSpent / totalTrips : 0;
 
+  // Unique store names for filter hint
+  const storeNames = [...new Set(allTrips.map((t) => t.storeName).filter(Boolean))] as string[];
+
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-semibold">Shopping History</h1>
-        <p className="text-sm text-muted mt-0.5">{totalTrips} trip{totalTrips !== 1 ? 's' : ''} recorded</p>
+      <div className="flex items-center justify-between flex-wrap gap-3">
+        <div>
+          <h1 className="text-2xl font-semibold">Shopping History</h1>
+          <p className="text-sm text-muted mt-0.5">{allTrips.length} trip{allTrips.length !== 1 ? 's' : ''} recorded</p>
+        </div>
       </div>
+
+      {/* Filters */}
+      {allTrips.length > 0 && (
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="relative flex-1 min-w-[140px] max-w-xs">
+            <Filter className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted" />
+            <input
+              value={filterStore}
+              onChange={(e) => setFilterStore(e.target.value)}
+              placeholder="Filter by store..."
+              list="store-names-list"
+              className="flex h-9 w-full rounded-xl border border-card-border dark:border-[#374151] bg-white dark:bg-[#1F2937] pl-8 pr-3 text-sm placeholder:text-muted focus:outline-none focus:ring-2 focus:ring-primary/30"
+            />
+            <datalist id="store-names-list">
+              {storeNames.map((s) => <option key={s} value={s} />)}
+            </datalist>
+          </div>
+          {(['all', '7d', '30d', '90d'] as const).map((r) => (
+            <button key={r} onClick={() => setFilterDateRange(r)}
+              className={cn('px-2.5 py-1 rounded-lg text-xs font-medium border transition-all',
+                filterDateRange === r ? 'border-primary bg-primary/10 text-primary' : 'border-card-border dark:border-[#374151] text-muted hover:border-slate-300'
+              )}>
+              {r === 'all' ? 'All time' : r === '7d' ? 'Last 7d' : r === '30d' ? 'Last 30d' : 'Last 90d'}
+            </button>
+          ))}
+          <select
+            value={filterSort}
+            onChange={(e) => setFilterSort(e.target.value as any)}
+            className="h-9 rounded-xl border border-card-border dark:border-[#374151] bg-white dark:bg-[#1F2937] dark:text-foreground px-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 dark:[color-scheme:dark]"
+          >
+            <option value="recent">Most Recent</option>
+            <option value="cost_desc">Cost: High → Low</option>
+            <option value="cost_asc">Cost: Low → High</option>
+          </select>
+        </div>
+      )}
 
       {/* Summary Stats */}
       {totalTrips > 0 && (
@@ -66,7 +151,7 @@ export default function ShoppingHistoryPage() {
       ) : isLoading ? (
         <div className="space-y-3">
           {[1, 2, 3].map((i) => (
-            <div key={i} className="rounded-2xl border border-card-border bg-white p-5">
+            <div key={i} className="rounded-2xl border border-card-border bg-white dark:bg-[#1F2937] p-5">
               <Skeleton className="h-5 w-40 mb-2" />
               <Skeleton className="h-4 w-32 mb-3" />
               <Skeleton className="h-4 w-full" />
@@ -76,21 +161,54 @@ export default function ShoppingHistoryPage() {
       ) : trips.length === 0 ? (
         <EmptyState
           icon={History}
-          title="No shopping history"
-          description="Complete a shopping session to see your trip history here."
+          title={allTrips.length > 0 ? 'No trips match your filters' : 'No shopping history'}
+          description={allTrips.length > 0 ? 'Try adjusting your filters.' : 'Complete a shopping session to see your trip history here.'}
         />
       ) : (
         <div className="space-y-3">
           {trips.map((trip: any) => (
-            <TripCard key={trip.id} trip={trip} />
+            <TripCard key={trip.id} trip={trip} onDeleteRequest={(id, storeName) => setDeleteTarget({ id, storeName })} />
           ))}
         </div>
       )}
+
+      {/* Delete confirmation dialog */}
+      <Dialog open={!!deleteTarget} onOpenChange={(o) => { if (!o) { setDeleteTarget(null); setDeleteReason(''); } }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Delete Trip?</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3 my-3">
+            <p className="text-sm text-muted">
+              Delete the trip to <span className="font-semibold text-foreground">{deleteTarget?.storeName || 'this store'}</span>? This cannot be undone.
+            </p>
+            <div>
+              <label className="text-xs font-medium text-muted block mb-1">Reason (optional)</label>
+              <Input
+                placeholder="e.g., logged by accident"
+                value={deleteReason}
+                onChange={(e) => setDeleteReason(e.target.value)}
+                autoFocus
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => { setDeleteTarget(null); setDeleteReason(''); }}>Cancel</Button>
+            <Button
+              variant="destructive"
+              onClick={() => deleteTarget && deleteMutation.mutate({ id: deleteTarget.id, reason: deleteReason })}
+              disabled={deleteMutation.isPending}
+            >
+              {deleteMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Delete Trip'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
 
-function TripCard({ trip }: { trip: any }) {
+function TripCard({ trip, onDeleteRequest }: { trip: any; onDeleteRequest: (id: string, storeName: string) => void }) {
   const [expanded, setExpanded] = useState(false);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [scanResult, setScanResult] = useState<any>(null);
@@ -133,10 +251,11 @@ function TripCard({ trip }: { trip: any }) {
 
   return (
     <Card>
-      <button
-        onClick={() => setExpanded(!expanded)}
-        className="w-full text-left px-5 py-4"
-      >
+      <div className="flex items-center w-full">
+        <button
+          onClick={() => setExpanded(!expanded)}
+          className="flex-1 min-w-0 text-left px-5 py-4"
+        >
         <div className="flex items-center gap-4">
           <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center shrink-0">
             <ShoppingCart className="h-5 w-5 text-primary" />
@@ -183,7 +302,15 @@ function TripCard({ trip }: { trip: any }) {
             <ChevronDown className={cn('h-4 w-4 text-muted transition-transform', expanded && 'rotate-180')} />
           </div>
         </div>
-      </button>
+        </button>
+        <button
+          onClick={() => onDeleteRequest(trip.id, trip.storeName || 'Shopping Trip')}
+          className="px-3 py-4 text-muted hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors shrink-0 rounded-r-xl"
+          title="Delete trip"
+        >
+          <Trash2 className="h-4 w-4" />
+        </button>
+      </div>
 
       <AnimatePresence>
         {expanded && (
@@ -218,7 +345,7 @@ function TripCard({ trip }: { trip: any }) {
 
               {/* Spend vs Estimated Summary */}
               {trip.actualCost > 0 && (
-                <div className="rounded-xl bg-slate-50 border border-slate-100 px-4 py-3 grid grid-cols-3 gap-3 text-center">
+                <div className="rounded-xl bg-slate-50 dark:bg-[#283447]/70 border border-slate-100 dark:border-[#374151] px-4 py-3 grid grid-cols-3 gap-3 text-center">
                   <div>
                     <p className="text-[10px] uppercase tracking-wider text-muted font-semibold">Estimated</p>
                     <p className="text-sm font-bold mt-0.5">{formatCurrency(trip.estimatedCost || 0)}</p>
@@ -255,9 +382,9 @@ function TripCard({ trip }: { trip: any }) {
                     key={item._key}
                     className={cn(
                       'flex items-center gap-2 px-3 py-2 rounded-lg text-sm',
-                      item.status === 'PICKED_UP' ? 'bg-emerald-50' :
-                      item.status === 'OUT_OF_STOCK' ? 'bg-slate-50 opacity-60' :
-                      item.status === 'TOO_EXPENSIVE' ? 'bg-amber-50' : 'bg-slate-50 opacity-50'
+                      item.status === 'PICKED_UP' ? 'bg-emerald-50 dark:bg-emerald-900/20' :
+                      item.status === 'OUT_OF_STOCK' ? 'bg-slate-50 dark:bg-[#283447]/40 opacity-60' :
+                      item.status === 'TOO_EXPENSIVE' ? 'bg-amber-50 dark:bg-amber-900/20' : 'bg-slate-50 dark:bg-[#283447]/40 opacity-50'
                     )}
                   >
                     {item.status === 'PICKED_UP' ? <Check className="h-3.5 w-3.5 text-emerald-600 shrink-0" /> :

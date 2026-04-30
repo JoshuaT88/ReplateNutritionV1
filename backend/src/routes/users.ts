@@ -31,6 +31,8 @@ const preferencesUpdateSchema = z.object({
   shoppingFrequency: z.enum(['weekly', 'biweekly', 'monthly', 'custom']).nullable().optional(),
   shoppingDay: z.enum(['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday']).nullable().optional(),
   perTripBudgetAllocation: z.number().nonnegative().nullable().optional(),
+  city: z.string().trim().max(100).nullable().optional(),
+  state: z.string().trim().length(2).toUpperCase().nullable().optional(),
 });
 
 const router = Router();
@@ -86,6 +88,14 @@ router.put('/me/preferences', async (req: AuthRequest, res: Response, next: Next
 
     if (Object.prototype.hasOwnProperty.call(parsed, 'zipCode')) {
       updateData.zipCode = parsed.zipCode?.trim() ? parsed.zipCode.trim() : null;
+    }
+
+    if (Object.prototype.hasOwnProperty.call(parsed, 'city')) {
+      updateData.city = parsed.city?.trim() || null;
+    }
+
+    if (Object.prototype.hasOwnProperty.call(parsed, 'state')) {
+      updateData.state = parsed.state?.trim() || null;
     }
 
     if (Object.prototype.hasOwnProperty.call(parsed, 'householdType')) {
@@ -221,10 +231,6 @@ router.post('/me/preferences/request-email-verification', async (req: AuthReques
     const user = await prisma.user.findUnique({ where: { id: userId }, select: { email: true, fullName: true } });
     if (!user) throw new AppError(404, 'User not found');
 
-    if (!resend || !env.FROM_EMAIL) {
-      throw new AppError(503, 'Email service is not configured on this server.');
-    }
-
     // Delete any existing unused codes for this user/purpose
     await prisma.emailVerificationCode.deleteMany({
       where: { userId, purpose: 'notifications', usedAt: null },
@@ -239,14 +245,23 @@ router.post('/me/preferences/request-email-verification', async (req: AuthReques
       data: { userId, code, purpose: 'notifications', expiresAt },
     });
 
-    const toEmail = env.NODE_ENV === 'production' ? user.email : (env.DEV_EMAIL ?? user.email);
+    // In dev without Resend configured, log the code to console so it can still be tested
+    if (!resend || !env.FROM_EMAIL) {
+      if (env.NODE_ENV !== 'production') {
+        console.log(`[DEV] Email verification code for ${user.email}: ${code}`);
+        return res.json({ sent: true, devCode: code });
+      }
+      throw new AppError(503, 'Email service is not configured on this server.');
+    }
 
-    await resend.emails.send({
+    const toEmail = env.NODE_ENV === 'production' ? user.email : (env.DEV_EMAIL || user.email);
+
+    const { error: sendError } = await resend.emails.send({
       from: env.FROM_EMAIL,
       to: toEmail,
       subject: 'Your Replate verification code',
       html: `
-        <div style="font-family:Inter,sans-serif;max-width:480px;margin:0 auto;padding:32px 24px;">
+        <div style="background-color:#ffffff;font-family:Inter,Arial,sans-serif;max-width:480px;margin:0 auto;padding:32px 24px;">
           <h2 style="color:#0F172A;font-size:22px;margin-bottom:8px;">Email Verification</h2>
           <p style="color:#374151;font-size:15px;margin-bottom:24px;">
             Use the code below to verify your email for Replate notifications. It expires in 5 minutes.
@@ -258,6 +273,15 @@ router.post('/me/preferences/request-email-verification', async (req: AuthReques
         </div>
       `,
     });
+
+    if (sendError) {
+      console.error('[Email] Verification send failed:', sendError);
+      if (env.NODE_ENV !== 'production') {
+        console.log(`[DEV] Verification code fallback for ${user.email}: ${code}`);
+        return res.json({ sent: true, devCode: code });
+      }
+      throw new AppError(502, `Failed to send verification email: ${sendError.message}`);
+    }
 
     res.json({ sent: true });
   } catch (err) { next(err); }
@@ -303,6 +327,90 @@ router.post('/me/preferences/verify-email-code', async (req: AuthRequest, res: R
     });
 
     res.json({ success: true, preferences: prefs });
+  } catch (err) { next(err); }
+});
+
+router.post('/me/change-email-request', async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const { newEmail } = z.object({ newEmail: z.string().email() }).parse(req.body);
+    const userId = req.user!.userId;
+
+    // Check new email not already taken
+    const existing = await prisma.user.findUnique({ where: { email: newEmail } });
+    if (existing) throw new AppError(400, 'That email address is already in use.');
+
+    if (!resend || !env.FROM_EMAIL) throw new AppError(503, 'Email service is not configured on this server.');
+
+    // Delete any existing change-email codes for this user
+    await prisma.emailVerificationCode.deleteMany({
+      where: { userId, purpose: { startsWith: 'change_email:' }, usedAt: null },
+    });
+
+    const code = crypto.randomInt(100000, 1000000).toString();
+    const expiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
+
+    await prisma.emailVerificationCode.create({
+      data: { userId, code, purpose: `change_email:${newEmail}`, expiresAt },
+    });
+
+    const toEmail = env.NODE_ENV === 'production' ? newEmail : (env.DEV_EMAIL || newEmail);
+    const { error: sendError } = await resend.emails.send({
+      from: env.FROM_EMAIL,
+      to: toEmail,
+      subject: 'Confirm your new Replate email address',
+      html: `
+        <div style="background-color:#ffffff;font-family:Inter,Arial,sans-serif;max-width:480px;margin:0 auto;padding:32px 24px;">
+          <div style="border:1px solid #E2E8F0;border-radius:16px;padding:28px;background-color:#ffffff;">
+            <p style="font-size:12px;letter-spacing:0.08em;text-transform:uppercase;color:#64748B;margin:0 0 10px;">Replate Nutrition</p>
+            <h2 style="color:#0F172A;font-size:22px;margin:0 0 8px;">Confirm Email Change</h2>
+            <p style="color:#334155;font-size:15px;line-height:1.6;margin:0 0 24px;">
+              Enter this code in Replate to confirm your new email address. It expires in 10 minutes.
+            </p>
+            <div style="background:#F1F5F9;border-radius:12px;padding:24px;text-align:center;margin-bottom:24px;">
+              <span style="font-size:36px;font-weight:700;letter-spacing:8px;color:#3B82F6;">${code}</span>
+            </div>
+            <p style="color:#6B7280;font-size:13px;">If you didn't request this, you can safely ignore this email.</p>
+          </div>
+        </div>
+      `,
+    });
+    if (sendError) {
+      console.error('[Email] Change-email send failed:', sendError);
+      if (env.NODE_ENV !== 'production') console.log(`[DEV] Change-email code for ${newEmail}: ${code}`);
+      else throw new AppError(502, `Failed to send confirmation email: ${sendError.message}`);
+    }
+
+    res.json({ sent: true });
+  } catch (err) { next(err); }
+});
+
+router.post('/me/change-email-confirm', async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const { code } = z.object({ code: z.string().length(6).regex(/^\d{6}$/) }).parse(req.body);
+    const userId = req.user!.userId;
+
+    const record = await prisma.emailVerificationCode.findFirst({
+      where: {
+        userId,
+        purpose: { startsWith: 'change_email:' },
+        code,
+        usedAt: null,
+        expiresAt: { gt: new Date() },
+      },
+    });
+
+    if (!record) throw new AppError(400, 'Invalid or expired verification code.');
+
+    const newEmail = record.purpose.replace('change_email:', '');
+
+    // Confirm email not already taken (race condition guard)
+    const conflict = await prisma.user.findUnique({ where: { email: newEmail } });
+    if (conflict && conflict.id !== userId) throw new AppError(400, 'That email address is already in use.');
+
+    await prisma.emailVerificationCode.update({ where: { id: record.id }, data: { usedAt: new Date() } });
+    await prisma.user.update({ where: { id: userId }, data: { email: newEmail } });
+
+    res.json({ success: true, email: newEmail });
   } catch (err) { next(err); }
 });
 

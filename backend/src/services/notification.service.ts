@@ -31,14 +31,14 @@ function ensureEmailProvider() {
 
 function renderLayout(title: string, intro: string, body: string, footer: string) {
   return `
-    <div style="font-family: Inter, Arial, sans-serif; max-width: 560px; margin: 0 auto; padding: 32px 20px; color: #0F172A;">
-      <div style="border: 1px solid #E2E8F0; border-radius: 20px; padding: 28px; background: linear-gradient(180deg, #FFFFFF 0%, #F8FAFC 100%);">
-        <p style="font-size: 12px; letter-spacing: 0.08em; text-transform: uppercase; color: #64748B; margin: 0 0 10px;">Replate Nutrition</p>
-        <h1 style="font-size: 24px; line-height: 1.2; margin: 0 0 12px;">${title}</h1>
-        <p style="font-size: 15px; line-height: 1.6; color: #475569; margin: 0 0 20px;">${intro}</p>
+    <div style="background-color:#ffffff;font-family:Inter,Arial,sans-serif;max-width:560px;margin:0 auto;padding:32px 20px;color:#0F172A;">
+      <div style="border:1px solid #E2E8F0;border-radius:20px;padding:28px;background-color:#ffffff;">
+        <p style="font-size:12px;letter-spacing:0.08em;text-transform:uppercase;color:#64748B;margin:0 0 10px;">Replate Nutrition</p>
+        <h1 style="font-size:24px;line-height:1.2;margin:0 0 12px;color:#0F172A;">${title}</h1>
+        <p style="font-size:15px;line-height:1.6;color:#334155;margin:0 0 20px;">${intro}</p>
         ${body}
       </div>
-      <p style="font-size: 12px; line-height: 1.6; color: #64748B; margin: 16px 6px 0;">${footer}</p>
+      <p style="font-size:12px;line-height:1.6;color:#64748B;margin:16px 6px 0;">${footer}</p>
     </div>
   `;
 }

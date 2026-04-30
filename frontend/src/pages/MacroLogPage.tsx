@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { motion } from 'framer-motion';
-import { Plus, Trash2, Loader2, Activity, Download, User } from 'lucide-react';
+import { Plus, Trash2, Loader2, Activity, Download, User, Sparkles, ChevronDown } from 'lucide-react';
 import { api } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -11,6 +11,7 @@ import { useToast } from '@/components/ui/toast';
 import { fmtDate } from '@/lib/time';
 import { cn } from '@/lib/utils';
 import type { MealPlan } from '@/types';
+import { PageTutorial } from '@/components/shared/PageTutorial';
 
 interface MacroFormState {
   mealName: string;
@@ -42,7 +43,10 @@ export default function MacroLogPage() {
   const [showAdd, setShowAdd] = useState(false);
   const [showImport, setShowImport] = useState(false);
   const [importSearch, setImportSearch] = useState('');
+  const [importShowRecent, setImportShowRecent] = useState(false);
   const [form, setForm] = useState<MacroFormState>(EMPTY_FORM);
+  const [estimatingMacros, setEstimatingMacros] = useState(false);
+  const [expandedLogId, setExpandedLogId] = useState<string | null>(null);
 
   const { data: profiles } = useQuery({
     queryKey: ['profiles'],
@@ -91,12 +95,45 @@ export default function MacroLogPage() {
     enabled: showImport,
   });
 
+  // Meals matching search
   const filteredMeals = (mealPlanData ?? []).filter((m: MealPlan) =>
     !importSearch || m.mealName.toLowerCase().includes(importSearch.toLowerCase())
   ).slice(0, 20);
 
+  // Recent completed: meals with a date in the past, sorted newest first
+  const recentMeals = (mealPlanData ?? [])
+    .filter((m: MealPlan) => new Date(m.date) < new Date())
+    .sort((a: MealPlan, b: MealPlan) => new Date(b.date).getTime() - new Date(a.date).getTime())
+    .slice(0, 15);
+
+  const handleEstimateMacros = async () => {
+    if (!form.mealName.trim()) return;
+    setEstimatingMacros(true);
+    try {
+      const result = await api.estimateMealMacros(form.mealName.trim());
+      setForm((f) => ({
+        ...f,
+        calories: result.calories != null ? String(result.calories) : f.calories,
+        protein: result.protein != null ? String(result.protein) : f.protein,
+        carbs: result.carbs != null ? String(result.carbs) : f.carbs,
+        fat: result.fat != null ? String(result.fat) : f.fat,
+        fiber: result.fiber != null ? String(result.fiber) : f.fiber,
+      }));
+      toast('success', 'Macros estimated!');
+    } catch {
+      toast('error', 'Could not estimate macros');
+    } finally {
+      setEstimatingMacros(false);
+    }
+  };
+
   return (
     <div className="max-w-2xl mx-auto space-y-6">
+      <PageTutorial pageKey="nutrition-log" steps={[
+        { title: 'Select profile & date', description: 'Choose a household member and the date you want to log nutrition for.' },
+        { title: 'Log a meal', description: 'Add meals manually or use the AI estimator to auto-fill macros from a meal name.' },
+        { title: 'Import from Meal Plan', description: 'Pull in meals already in your plan to auto-populate calorie and macro data.' },
+      ]} />
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
           <h1 className="text-2xl font-semibold flex items-center gap-2">
@@ -106,12 +143,12 @@ export default function MacroLogPage() {
         </div>
         <div className="flex items-center gap-2 flex-wrap">
           {humanProfiles.length > 0 && (
-            <div className="flex items-center gap-1.5 bg-slate-100 rounded-xl px-3 py-1.5">
+            <div className="flex items-center gap-1.5 bg-slate-100 dark:bg-[#283447] rounded-xl px-3 py-1.5">
               <User className="h-3.5 w-3.5 text-muted shrink-0" />
               <select
                 value={selectedProfileId}
                 onChange={(e) => setSelectedProfileId(e.target.value)}
-                className="bg-transparent text-sm font-medium focus:outline-none"
+                className="bg-transparent dark:text-foreground text-sm font-medium focus:outline-none dark:[color-scheme:dark]"
               >
                 <option value="">All profiles</option>
                 {humanProfiles.map((p) => (
@@ -124,7 +161,7 @@ export default function MacroLogPage() {
             type="date"
             value={selectedDate}
             onChange={(e) => setSelectedDate(e.target.value)}
-            className="w-40"
+            className="w-40 dark:[color-scheme:dark]"
           />
           <Button variant="outline" onClick={() => setShowImport(true)}>
             <Download className="h-4 w-4" /> Import
@@ -147,7 +184,10 @@ export default function MacroLogPage() {
                 <p className="text-base sm:text-lg font-bold leading-tight">
                   {key === 'calories' ? Math.round(totals.calories) : (totals[key] ?? 0).toFixed(1)}
                 </p>
-                <p className="text-[9px] sm:text-[10px] font-medium capitalize">{key === 'calories' ? 'kcal' : `${key}g`}</p>
+                <p className="text-[9px] sm:text-[10px] font-semibold uppercase tracking-wide leading-tight">
+                  {key === 'calories' ? 'Kcal' : key.charAt(0).toUpperCase() + key.slice(1)}
+                </p>
+                {key !== 'calories' && <p className="text-[8px] opacity-60 italic leading-none">g</p>}
               </div>
             ))}
           </div>
@@ -196,51 +236,99 @@ export default function MacroLogPage() {
             animate={{ opacity: 1 }}
             className="space-y-2"
           >
-            {data.logs.map((log: any) => (
-              <Card key={log.id}>
-                <CardContent className="p-3">
-                  <div className="flex items-start gap-3">
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm font-medium">{log.mealName}</p>
-                      {log.notes && <p className="text-xs text-muted mt-0.5">{log.notes}</p>}
-                      <div className="flex flex-wrap gap-1.5 mt-1.5">
-                        {log.calories && (
-                          <span className={cn('text-[10px] font-medium px-2 py-0.5 rounded-full', MACRO_COLORS.calories)}>
-                            {log.calories} kcal
-                          </span>
+            {data.logs.map((log: any) => {
+              const isExpanded = expandedLogId === log.id;
+              return (
+                <Card key={log.id} className={cn('transition-all', isExpanded && 'ring-1 ring-primary/30')}>
+                  <CardContent className="p-3">
+                    {/* Header row — always visible, click to expand */}
+                    <button
+                      className="w-full text-left"
+                      onClick={() => setExpandedLogId(isExpanded ? null : log.id)}
+                    >
+                      <div className="flex items-start gap-3">
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-1.5">
+                            <p className="text-sm font-medium">{log.mealName}</p>
+                            <ChevronDown className={cn('h-3.5 w-3.5 text-muted shrink-0 transition-transform', isExpanded && 'rotate-180')} />
+                          </div>
+                          {log.notes && <p className="text-xs text-muted mt-0.5 truncate">{log.notes}</p>}
+                          {/* Compact chips summary when collapsed */}
+                          {!isExpanded && (
+                            <div className="flex flex-wrap gap-1 mt-1.5">
+                              {log.calories != null && (
+                                <span className={cn('text-[10px] font-medium px-2 py-0.5 rounded-full', MACRO_COLORS.calories)}>
+                                  {log.calories} kcal
+                                </span>
+                              )}
+                              {log.protein != null && (
+                                <span className={cn('text-[10px] font-medium px-2 py-0.5 rounded-full', MACRO_COLORS.protein)}>
+                                  P {log.protein}g
+                                </span>
+                              )}
+                              {log.carbs != null && (
+                                <span className={cn('text-[10px] font-medium px-2 py-0.5 rounded-full', MACRO_COLORS.carbs)}>
+                                  C {log.carbs}g
+                                </span>
+                              )}
+                              {log.fat != null && (
+                                <span className={cn('text-[10px] font-medium px-2 py-0.5 rounded-full', MACRO_COLORS.fat)}>
+                                  F {log.fat}g
+                                </span>
+                              )}
+                              {log.fiber != null && (
+                                <span className={cn('text-[10px] font-medium px-2 py-0.5 rounded-full', MACRO_COLORS.fiber)}>
+                                  Fiber {log.fiber}g
+                                </span>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                        <button
+                          onClick={(e) => { e.stopPropagation(); deleteMutation.mutate(log.id); }}
+                          className="p-1.5 rounded-lg text-muted hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors shrink-0"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </button>
+                      </div>
+                    </button>
+
+                    {/* Expanded details */}
+                    {isExpanded && (
+                      <div className="mt-3 pt-3 border-t border-card-border space-y-3">
+                        {/* Full macro breakdown grid */}
+                        <div className="grid grid-cols-5 gap-1.5">
+                          {(['calories', 'protein', 'carbs', 'fat', 'fiber'] as const).map((k) => {
+                            const val = log[k];
+                            if (val == null) return null;
+                            return (
+                              <div key={k} className={cn('rounded-lg px-1.5 py-2 text-center', MACRO_COLORS[k])}>
+                                <p className="text-sm font-bold leading-tight">{k === 'calories' ? Math.round(val) : Number(val).toFixed(1)}</p>
+                                <p className="text-[9px] font-semibold uppercase tracking-wide">{k === 'calories' ? 'Kcal' : k.charAt(0).toUpperCase() + k.slice(1)}</p>
+                                {k !== 'calories' && <p className="text-[8px] opacity-60 italic leading-none">g</p>}
+                              </div>
+                            );
+                          })}
+                        </div>
+                        {/* Notes full */}
+                        {log.notes && (
+                          <div className="bg-slate-50 dark:bg-[#1e2a38] rounded-lg p-2.5">
+                            <p className="text-[10px] font-semibold text-muted uppercase tracking-wide mb-1">Notes</p>
+                            <p className="text-xs text-text-secondary">{log.notes}</p>
+                          </div>
                         )}
-                        {log.protein && (
-                          <span className={cn('text-[10px] font-medium px-2 py-0.5 rounded-full', MACRO_COLORS.protein)}>
-                            P: {log.protein}g
-                          </span>
-                        )}
-                        {log.carbs && (
-                          <span className={cn('text-[10px] font-medium px-2 py-0.5 rounded-full', MACRO_COLORS.carbs)}>
-                            C: {log.carbs}g
-                          </span>
-                        )}
-                        {log.fat && (
-                          <span className={cn('text-[10px] font-medium px-2 py-0.5 rounded-full', MACRO_COLORS.fat)}>
-                            F: {log.fat}g
-                          </span>
-                        )}
-                        {log.fiber && (
-                          <span className={cn('text-[10px] font-medium px-2 py-0.5 rounded-full', MACRO_COLORS.fiber)}>
-                            Fiber: {log.fiber}g
-                          </span>
+                        {/* Logged at */}
+                        {log.createdAt && (
+                          <p className="text-[10px] text-muted">
+                            Logged: {new Date(log.createdAt).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}
+                          </p>
                         )}
                       </div>
-                    </div>
-                    <button
-                      onClick={() => deleteMutation.mutate(log.id)}
-                      className="p-1.5 rounded-lg text-muted hover:text-red-500 hover:bg-red-50 transition-colors"
-                    >
-                      <Trash2 className="h-3.5 w-3.5" />
-                    </button>
-                  </div>
-                </CardContent>
-              </Card>
-            ))}
+                    )}
+                  </CardContent>
+                </Card>
+              );
+            })}
           </motion.div>
         )}
       </div>
@@ -254,11 +342,27 @@ export default function MacroLogPage() {
           <div className="space-y-3 my-4">
             <div>
               <label className="text-xs font-medium text-muted block mb-1">Meal name *</label>
-              <Input
-                placeholder="e.g., Oatmeal with berries"
-                value={form.mealName}
-                onChange={(e) => setForm((f) => ({ ...f, mealName: e.target.value }))}
-              />
+              <div className="flex gap-2">
+                <Input
+                  placeholder="e.g., Oatmeal with berries"
+                  value={form.mealName}
+                  onChange={(e) => setForm((f) => ({ ...f, mealName: e.target.value }))}
+                />
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="shrink-0 gap-1 text-xs"
+                  onClick={handleEstimateMacros}
+                  disabled={!form.mealName.trim() || estimatingMacros}
+                  title="Auto-estimate macros using AI"
+                >
+                  {estimatingMacros
+                    ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    : <><Sparkles className="h-3.5 w-3.5" /> Est.</>}
+                </Button>
+              </div>
+              <p className="text-[10px] text-muted mt-1">Enter a meal name then tap Est. to auto-fill macros</p>
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div>
@@ -306,7 +410,7 @@ export default function MacroLogPage() {
       </Dialog>
 
       {/* T45: Import from Meal Plan dialog */}
-      <Dialog open={showImport} onOpenChange={(o) => { setShowImport(o); if (!o) setImportSearch(''); }}>
+      <Dialog open={showImport} onOpenChange={(o) => { setShowImport(o); if (!o) { setImportSearch(''); setImportShowRecent(false); } }}>
         <DialogContent>
           <DialogHeader><DialogTitle>Import from Meal Plan</DialogTitle></DialogHeader>
           <div className="space-y-3">
@@ -316,34 +420,43 @@ export default function MacroLogPage() {
               onChange={(e) => setImportSearch(e.target.value)}
               autoFocus
             />
-            <div className="max-h-72 overflow-y-auto space-y-1.5">
-              {filteredMeals.length === 0 ? (
-                <p className="text-sm text-muted text-center py-6">No meals found</p>
-              ) : (
-                filteredMeals.map((meal: MealPlan) => (
-                  <button
-                    key={meal.id}
-                    onClick={() => {
-                      setForm({
-                        mealName: meal.mealName,
-                        calories: meal.calories ? String(meal.calories) : '',
-                        protein: '', carbs: '', fat: '', fiber: '',
-                        notes: meal.preparationNotes || '',
-                      });
-                      setShowImport(false);
-                      setShowAdd(true);
-                    }}
-                    className="w-full text-left px-3 py-2.5 rounded-xl border border-card-border hover:bg-slate-50 transition-colors"
-                  >
-                    <p className="text-sm font-medium">{meal.mealName}</p>
-                    <p className="text-xs text-muted capitalize">
-                      {meal.mealType.replace(/_/g, ' ')} · {new Date(meal.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
-                      {meal.calories ? ` · ${meal.calories} cal` : ''}
-                    </p>
-                  </button>
-                ))
-              )}
-            </div>
+            {/* Search results */}
+            {importSearch && (
+              <div className="max-h-56 overflow-y-auto space-y-1.5">
+                {filteredMeals.length === 0 ? (
+                  <p className="text-sm text-muted text-center py-4">No meals found</p>
+                ) : (
+                  filteredMeals.map((meal: MealPlan) => (
+                    <MealImportRow key={meal.id} meal={meal} onSelect={() => {
+                      setForm({ mealName: meal.mealName, calories: meal.calories ? String(meal.calories) : '', protein: '', carbs: '', fat: '', fiber: '', notes: meal.preparationNotes || '' });
+                      setShowImport(false); setShowAdd(true);
+                    }} />
+                  ))
+                )}
+              </div>
+            )}
+            {/* Recent completed meals section */}
+            <button
+              onClick={() => setImportShowRecent((v) => !v)}
+              className="flex items-center justify-between w-full px-1 py-1 text-sm font-medium text-muted hover:text-foreground transition-colors"
+            >
+              <span>Recent completed meals</span>
+              <ChevronDown className={cn('h-4 w-4 transition-transform', importShowRecent && 'rotate-180')} />
+            </button>
+            {importShowRecent && (
+              <div className="max-h-56 overflow-y-auto space-y-1.5">
+                {recentMeals.length === 0 ? (
+                  <p className="text-sm text-muted text-center py-4">No recent meals</p>
+                ) : (
+                  recentMeals.map((meal: MealPlan) => (
+                    <MealImportRow key={meal.id} meal={meal} onSelect={() => {
+                      setForm({ mealName: meal.mealName, calories: meal.calories ? String(meal.calories) : '', protein: '', carbs: '', fat: '', fiber: '', notes: meal.preparationNotes || '' });
+                      setShowImport(false); setShowAdd(true);
+                    }} />
+                  ))
+                )}
+              </div>
+            )}
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setShowImport(false)}>Close</Button>
@@ -351,5 +464,20 @@ export default function MacroLogPage() {
         </DialogContent>
       </Dialog>
     </div>
+  );
+}
+
+function MealImportRow({ meal, onSelect }: { meal: MealPlan; onSelect: () => void }) {
+  return (
+    <button
+      onClick={onSelect}
+      className="w-full text-left px-3 py-2.5 rounded-xl border border-card-border dark:border-[#374151] hover:bg-slate-50 dark:hover:bg-[#283447] transition-colors"
+    >
+      <p className="text-sm font-medium">{meal.mealName}</p>
+      <p className="text-xs text-muted capitalize">
+        {meal.mealType.replace(/_/g, ' ')} · {new Date(meal.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+        {meal.calories ? ` · ${meal.calories} cal` : ''}
+      </p>
+    </button>
   );
 }

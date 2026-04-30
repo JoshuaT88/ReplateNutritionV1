@@ -52,6 +52,7 @@ export async function submitPrice(userId: string, data: {
 }
 
 export async function getEstimate(itemName: string, storeName: string, zipRegion: string) {
+  // 1. Check crowd-sourced averages first (highest priority)
   const avg = await prisma.storeItemAverage.findUnique({
     where: {
       itemName_storeName_zipRegion: { itemName, storeName, zipRegion },
@@ -68,12 +69,42 @@ export async function getEstimate(itemName: string, storeName: string, zipRegion
     };
   }
 
+  // 2. Check DB price cache (AI estimates from recent lookups)
+  const cacheKey = `${itemName.toLowerCase()}::${storeName.toLowerCase()}::${zipRegion}`;
+  const cached = await prisma.priceCache.findUnique({ where: { cacheKey } });
+  if (cached && cached.expiresAt > new Date()) {
+    return {
+      price: cached.estimatedPrice,
+      confidence: 'ai_estimate',
+      submissionCount: 0,
+      source: 'ai_cached',
+      cachedAt: cached.createdAt,
+    };
+  }
+
   return {
     price: null,
     confidence: 'ai_estimate',
     submissionCount: 0,
     source: 'ai_estimate',
   };
+}
+
+// Write an AI-estimated price into the cache (called from shopping list estimation)
+export async function cacheAiEstimate(itemName: string, storeName: string, zipRegion: string, price: number) {
+  const cacheKey = `${itemName.toLowerCase()}::${storeName.toLowerCase()}::${zipRegion}`;
+  const expiresAt = new Date();
+  expiresAt.setHours(expiresAt.getHours() + 24); // 24-hour TTL
+  await prisma.priceCache.upsert({
+    where: { cacheKey },
+    update: { estimatedPrice: price, expiresAt, createdAt: new Date() },
+    create: { cacheKey, itemName, storeName, zipRegion, estimatedPrice: price, source: 'ai', expiresAt },
+  }).catch(() => {}); // fire-and-forget, non-critical
+}
+
+// Purge expired price cache entries (called by priceAggregation job)
+export async function purgeExpiredPriceCache() {
+  return prisma.priceCache.deleteMany({ where: { expiresAt: { lt: new Date() } } });
 }
 
 export async function getStoreItemPrice(storeName: string, itemName: string) {

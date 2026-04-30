@@ -3,6 +3,7 @@ import { Outlet } from 'react-router-dom';
 import { Sidebar } from './Sidebar';
 import { MobileNav } from './MobileNav';
 import { OnboardingFlow } from '../onboarding/OnboardingFlow';
+import { NotificationBell } from '../shared/NotificationBell';
 import { useAuth } from '@/contexts/AuthContext';
 
 function useIsDesktop() {
@@ -40,7 +41,7 @@ export function AppShell({ children }: { children?: React.ReactNode }) {
   const sidebarWidth = sidebarCollapsed ? 72 : 280;
 
   return (
-    <div className="min-h-screen bg-background dark:bg-slate-900">
+    <div className="min-h-screen bg-background dark:bg-[#111827]">
       {/* Desktop sidebar */}
       <aside
         className="hidden lg:fixed lg:inset-y-0 lg:left-0 lg:flex lg:flex-col z-40 transition-all duration-300"
@@ -51,9 +52,13 @@ export function AppShell({ children }: { children?: React.ReactNode }) {
 
       {/* Main content */}
       <main
-        className="min-h-screen transition-all duration-300 pb-20 lg:pb-0 overflow-x-hidden dark:bg-slate-900"
+        className="min-h-screen transition-all duration-300 pb-20 lg:pb-0 overflow-x-hidden dark:bg-[#111827]"
         style={{ marginLeft: isDesktop ? sidebarWidth : 0 }}
       >
+        {/* Mobile top bar with notification bell */}
+        <div className="lg:hidden flex items-center justify-end px-4 pt-4 pb-0">
+          <NotificationBell />
+        </div>
         <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-6 lg:py-8">
           {children || <Outlet />}
         </div>

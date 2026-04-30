@@ -1,7 +1,9 @@
-import { useQuery, useMutation } from '@tanstack/react-query';
+import { useState } from 'react';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { motion } from 'framer-motion';
-import { Users, ShoppingCart, CalendarDays, ArrowRight, Plus, Sparkles, TrendingDown, RefreshCw } from 'lucide-react';
+import { Users, ShoppingCart, CalendarDays, ArrowRight, Plus, Sparkles, TrendingDown, RefreshCw, Package } from 'lucide-react';
+import { useToast } from '@/components/ui/toast';
 import { PieChart, Pie, Cell, ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip } from 'recharts';
 import { useAuth } from '@/contexts/AuthContext';
 import { api } from '@/lib/api';
@@ -23,6 +25,8 @@ const fadeUp = {
 
 export default function DashboardPage() {
   const { user, preferences } = useAuth();
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
 
   const { data: profiles, isLoading: profilesLoading } = useQuery({
     queryKey: ['profiles'],
@@ -62,6 +66,11 @@ export default function DashboardPage() {
   const addToListMutation = useMutation({
     mutationFn: (item: { itemName: string; category: string | null }) =>
       api.addShoppingItem({ itemName: item.itemName, category: item.category || undefined }),
+    onSuccess: (_, item) => {
+      queryClient.invalidateQueries({ queryKey: ['shoppingList'] });
+      toast('success', `${item.itemName} added to list`);
+    },
+    onError: () => toast('error', 'Could not add item'),
   });
 
   const budget = preferences?.budget || 0; // Budget is stored as monthly
@@ -103,8 +112,37 @@ export default function DashboardPage() {
     return weeks;
   })();
 
+  // T80c: pantry banner
+  const { data: pantryItems } = useQuery({ queryKey: ['pantryItems'], queryFn: () => api.getPantryItems() });
+  const daysUntilNextTrip = (() => {
+    if (!preferences?.shoppingDay) return null;
+    const dayNames = ['sunday','monday','tuesday','wednesday','thursday','friday','saturday'];
+    const target = dayNames.indexOf(preferences.shoppingDay.toLowerCase());
+    if (target === -1) return null;
+    const diff = (target - new Date().getDay() + 7) % 7;
+    return diff === 0 ? 7 : diff;
+  })();
+  const pantryBannerKey = `pantry_banner_dismissed_${new Date().toISOString().slice(0, 7)}`;
+  const [pantryBannerDismissed, setPantryBannerDismissed] = useState(() => localStorage.getItem(pantryBannerKey) === '1');
+  const showPantryBanner = !pantryBannerDismissed && daysUntilNextTrip !== null && daysUntilNextTrip <= 2 && pantryItems && pantryItems.length > 0;
+
   return (
     <motion.div variants={stagger} initial="hidden" animate="show" className="space-y-6">
+      {/* T80c Pantry banner */}
+      {showPantryBanner && (
+        <div className="flex items-center justify-between px-4 py-3 rounded-xl bg-emerald-50 border border-emerald-200">
+          <div className="flex items-center gap-2">
+            <Package className="h-4 w-4 text-emerald-600" />
+            <p className="text-sm font-medium text-emerald-800">
+              Your next shopping trip is in {daysUntilNextTrip} day{daysUntilNextTrip !== 1 ? 's' : ''} — check your pantry before you go!
+            </p>
+          </div>
+          <div className="flex gap-2">
+            <Link to="/pantry"><Button size="sm" variant="outline">Review Pantry</Button></Link>
+            <Button size="sm" variant="outline" onClick={() => { localStorage.setItem(pantryBannerKey, '1'); setPantryBannerDismissed(true); }}>Dismiss</Button>
+          </div>
+        </div>
+      )}
       {/* Greeting */}
       <motion.div variants={fadeUp}>
         <h1 className="text-2xl lg:text-3xl font-semibold text-foreground">
@@ -156,10 +194,76 @@ export default function DashboardPage() {
         </motion.div>
       )}
 
+      {/* ── Mobile-only: Profiles + Quick Actions pinned above data cards ── */}
+      <div className="lg:hidden grid grid-cols-2 gap-4">
+        {/* Profiles */}
+        <motion.div variants={fadeUp} className="col-span-1">
+          <Card className="h-full">
+            <CardHeader className="flex-row items-center justify-between pb-2 pt-4 px-4">
+              <CardTitle className="text-sm">Profiles</CardTitle>
+              <Link to="/profiles">
+                <Button variant="ghost" size="sm">View <ArrowRight className="h-3 w-3" /></Button>
+              </Link>
+            </CardHeader>
+            <CardContent className="px-4 pb-4">
+              {profilesLoading ? (
+                <div className="space-y-2">{[1, 2].map((i) => <Skeleton key={i} className="h-9" />)}</div>
+              ) : profiles?.length ? (
+                <div className="space-y-2">
+                  {profiles.slice(0, 3).map((p) => (
+                    <Link key={p.id} to={`/profiles/${p.id}`} className="flex items-center gap-2 p-1.5 rounded-lg hover:bg-slate-50 dark:hover:bg-[#283447] transition-colors">
+                      {p.avatarUrl ? (
+                        <img src={p.avatarUrl} alt={p.name} className="w-7 h-7 rounded-lg object-cover shrink-0" />
+                      ) : (
+                        <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center text-white text-[10px] font-bold shrink-0">
+                          {p.name[0]}
+                        </div>
+                      )}
+                      <div className="min-w-0">
+                        <p className="text-xs font-medium truncate">{p.name}</p>
+                        <p className="text-[10px] text-muted capitalize">{p.type.toLowerCase()}</p>
+                      </div>
+                    </Link>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-xs text-muted text-center py-3">No profiles yet.</p>
+              )}
+            </CardContent>
+          </Card>
+        </motion.div>
+
+        {/* Quick Actions */}
+        <motion.div variants={fadeUp} className="col-span-1">
+          <Card className="h-full">
+            <CardHeader className="pb-2 pt-4 px-4">
+              <CardTitle className="text-sm">Quick Actions</CardTitle>
+            </CardHeader>
+            <CardContent className="px-4 pb-4 space-y-2">
+              <Link to="/profiles/new" className="block">
+                <Button variant="outline" className="w-full justify-start gap-2 text-xs h-8">
+                  <Plus className="h-3.5 w-3.5" /> Add Nutrition Profile
+                </Button>
+              </Link>
+              <Link to="/recommendations" className="block">
+                <Button variant="outline" className="w-full justify-start gap-2 text-xs h-8">
+                  <Sparkles className="h-3.5 w-3.5" /> Recommendations
+                </Button>
+              </Link>
+              <Link to="/meal-plan" className="block">
+                <Button variant="outline" className="w-full justify-start gap-2 text-xs h-8">
+                  <CalendarDays className="h-3.5 w-3.5" /> Plan Meals
+                </Button>
+              </Link>
+            </CardContent>
+          </Card>
+        </motion.div>
+      </div>
+
       {/* Main grid */}
-      <div className="grid lg:grid-cols-3 gap-6">
+      <div className="grid lg:grid-cols-3 gap-6 w-full min-w-0">
         {/* Left column (2/3) — on mobile this is the primary flow */}
-        <div className="lg:col-span-2 space-y-6">
+        <div className="lg:col-span-2 space-y-6 min-w-0">
           {/* Today's meals */}
           <motion.div variants={fadeUp}>
             <Card>
@@ -180,7 +284,7 @@ export default function DashboardPage() {
                 ) : todayMeals?.length ? (
                   <div className="space-y-2">
                     {todayMeals.slice(0, 5).map((meal) => (
-                      <div key={meal.id} className="flex items-center gap-3 p-3 rounded-xl bg-slate-50/80 hover:bg-slate-100/80 transition-colors">
+                      <div key={meal.id} className="flex items-center gap-3 p-3 rounded-xl bg-slate-50/80 dark:bg-white/5 hover:bg-slate-100/80 dark:hover:bg-[#283447] transition-colors">
                         <Badge variant="secondary" className="capitalize shrink-0">{meal.mealType}</Badge>
                         <div className="flex-1 min-w-0">
                           <p className="text-sm font-medium truncate">{meal.mealName}</p>
@@ -223,7 +327,7 @@ export default function DashboardPage() {
                 ) : shoppingList?.filter((i) => !i.checked).length ? (
                   <div className="space-y-1.5">
                     {shoppingList.filter((i) => !i.checked).slice(0, 5).map((item) => (
-                      <div key={item.id} className="flex items-center gap-3 p-2.5 rounded-lg hover:bg-slate-50 transition-colors">
+                      <div key={item.id} className="flex items-center gap-3 p-2.5 rounded-lg hover:bg-slate-50 dark:hover:bg-[#283447] transition-colors">
                         <div className="w-2 h-2 rounded-full bg-primary/40 shrink-0" />
                         <span className="text-sm flex-1">{item.itemName}</span>
                         {item.quantity && <span className="text-xs text-muted">{item.quantity}</span>}
@@ -246,7 +350,7 @@ export default function DashboardPage() {
 
           {/* Recent recommendations */}
           {recommendations && recommendations.length > 0 && (
-            <motion.div variants={fadeUp}>
+            <motion.div variants={fadeUp} className="min-w-0 w-full">
               <div className="flex items-center justify-between mb-3">
                 <h3 className="text-base font-semibold flex items-center gap-2">
                   <Sparkles className="h-4 w-4 text-primary" />
@@ -256,7 +360,7 @@ export default function DashboardPage() {
                   <Button variant="ghost" size="sm">See all <ArrowRight className="h-3.5 w-3.5" /></Button>
                 </Link>
               </div>
-              <div className="flex gap-4 overflow-x-auto pb-2 -mx-1 px-1 snap-x">
+              <div className="flex gap-4 overflow-x-auto pb-2 snap-x w-full">
                 {recommendations.slice(0, 6).map((rec) => (
                   <Card key={rec.id} className="min-w-[260px] max-w-[280px] shrink-0 snap-start hover:-translate-y-1 hover:shadow-card-hover transition-all duration-200">
                     <CardContent className="p-4">
@@ -278,7 +382,7 @@ export default function DashboardPage() {
         </div>
 
         {/* Right column (1/3) */}
-        <div className="space-y-6">
+        <div className="space-y-6 min-w-0">
           {/* Budget ring — desktop only (mobile version shown above) */}
           {budget > 0 && (
             <motion.div variants={fadeUp} className="hidden lg:block">
@@ -385,8 +489,8 @@ export default function DashboardPage() {
             </motion.div>
           )}
 
-          {/* Quick actions */}
-          <motion.div variants={fadeUp}>
+          {/* Quick actions — desktop only (mobile version shown above) */}
+          <motion.div variants={fadeUp} className="hidden lg:block">
             <Card>
               <CardHeader>
                 <CardTitle className="text-sm">Quick Actions</CardTitle>
@@ -394,7 +498,7 @@ export default function DashboardPage() {
               <CardContent className="space-y-2">
                 <Link to="/profiles/new" className="block">
                   <Button variant="outline" className="w-full justify-start gap-2">
-                    <Plus className="h-4 w-4" /> Add Profile
+                    <Plus className="h-4 w-4" /> Add Nutrition Profile
                   </Button>
                 </Link>
                 <Link to="/recommendations" className="block">
@@ -411,11 +515,11 @@ export default function DashboardPage() {
             </Card>
           </motion.div>
 
-          {/* Profiles summary */}
-          <motion.div variants={fadeUp}>
+          {/* Profiles summary — desktop only (mobile version shown above) */}
+          <motion.div variants={fadeUp} className="hidden lg:block">
             <Card>
               <CardHeader className="flex-row items-center justify-between">
-                <CardTitle className="text-sm">Profiles</CardTitle>
+                <CardTitle className="text-sm">Nutrition Profiles</CardTitle>
                 <Link to="/profiles">
                   <Button variant="ghost" size="sm">View <ArrowRight className="h-3 w-3" /></Button>
                 </Link>
@@ -428,10 +532,14 @@ export default function DashboardPage() {
                 ) : profiles?.length ? (
                   <div className="space-y-2">
                     {profiles.slice(0, 4).map((p) => (
-                      <Link key={p.id} to={`/profiles/${p.id}`} className="flex items-center gap-3 p-2 rounded-lg hover:bg-slate-50 transition-colors">
-                        <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center text-white text-xs font-bold">
-                          {p.name[0]}
-                        </div>
+                      <Link key={p.id} to={`/profiles/${p.id}`} className="flex items-center gap-3 p-2 rounded-lg hover:bg-slate-50 dark:hover:bg-[#283447] transition-colors">
+                        {p.avatarUrl ? (
+                          <img src={p.avatarUrl} alt={p.name} className="w-8 h-8 rounded-lg object-cover" />
+                        ) : (
+                          <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center text-white text-xs font-bold shrink-0">
+                            {p.name[0]}
+                          </div>
+                        )}
                         <div className="flex-1 min-w-0">
                           <p className="text-sm font-medium truncate">{p.name}</p>
                           <p className="text-[11px] text-muted capitalize">{p.type.toLowerCase()}</p>

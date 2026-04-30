@@ -19,13 +19,13 @@
   }
 
   .dark {
-    --color-background: #0F172A;
-    --color-foreground: #F1F5F9;
-    --color-card: #1E293B;
-    --color-card-border: #334155;
+    --color-background: #111827;
+    --color-foreground: #F9FAFB;
+    --color-card: #1F2937;
+    --color-card-border: #374151;
     --color-primary: #60A5FA;
-    --color-muted: #94A3B8;
-    --color-sidebar-bg: #020617;
+    --color-muted: #9CA3AF;
+    --color-sidebar-bg: #0B1120;
   }
 
   body {
@@ -33,6 +33,7 @@
     background: var(--color-background);
     color: var(--color-foreground);
     min-height: 100vh;
+    overflow-x: clip;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
   }
@@ -63,6 +64,10 @@
     background-size: 200% 100%;
     animation: shimmer 2s infinite linear;
   }
+  .dark .skeleton-shimmer {
+    background: linear-gradient(90deg, #1E2737 25%, #253044 50%, #1E2737 75%);
+    background-size: 200% 100%;
+  }
 
   /* Fluid font sizes — scale down on small screens */
   .text-fluid-sm  { font-size: clamp(0.75rem, 2vw, 0.875rem); }
@@ -89,6 +94,19 @@
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: #CBD5E1; border-radius: 3px; }
 ::-webkit-scrollbar-thumb:hover { background: #94A3B8; }
+.dark ::-webkit-scrollbar-thumb { background: #374151; }
+.dark ::-webkit-scrollbar-thumb:hover { background: #4B5563; }
+
+/* Dark mode select styling */
+.dark select {
+  background-color: #283447;
+  color: #F9FAFB;
+  border-color: #374151;
+}
+.dark select option {
+  background-color: #1F2937;
+  color: #F9FAFB;
+}
 
 /* Page transition fade */
 .page-enter { animation: page-in 0.22s ease-out both; }

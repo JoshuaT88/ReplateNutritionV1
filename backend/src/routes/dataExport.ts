@@ -26,12 +26,14 @@ async function sendCodeEmail(to: string, code: string) {
     to,
     subject: 'Your Replate Data Export Verification Code',
     html: `
-      <div style="font-family:sans-serif;max-width:480px;margin:auto;padding:24px">
-        <h2 style="color:#111">Data Export Request</h2>
-        <p style="color:#444">Use this code to confirm your data export request. It expires in 5 minutes.</p>
-        <div style="font-size:32px;font-weight:bold;letter-spacing:8px;text-align:center;
-             padding:20px;background:#f4f4f4;border-radius:8px;margin:24px 0;color:#111">${code}</div>
-        <p style="color:#888;font-size:12px">If you didn't request this, you can safely ignore this email.</p>
+      <div style="background-color:#ffffff;font-family:Inter,Arial,sans-serif;max-width:480px;margin:auto;padding:24px;">
+        <div style="border:1px solid #E2E8F0;border-radius:16px;padding:28px;background-color:#ffffff;">
+          <p style="font-size:12px;letter-spacing:0.08em;text-transform:uppercase;color:#64748B;margin:0 0 10px;">Replate Nutrition</p>
+          <h2 style="color:#0F172A;font-size:22px;margin:0 0 8px;">Data Export Request</h2>
+          <p style="color:#334155;font-size:15px;line-height:1.6;margin:0 0 24px;">Use this code to confirm your data export request. It expires in 5 minutes.</p>
+          <div style="font-size:32px;font-weight:bold;letter-spacing:8px;text-align:center;padding:20px;background:#F1F5F9;border-radius:8px;margin:0 0 20px;color:#0F172A;">${code}</div>
+          <p style="color:#6B7280;font-size:13px;">If you didn't request this, you can safely ignore this email.</p>
+        </div>
       </div>`,
   });
 }
@@ -69,15 +71,17 @@ async function sendExportReadyEmail(to: string, downloadUrl: string, expiresAt: 
     to,
     subject: 'Your Replate Data Export is Ready',
     html: `
-      <div style="font-family:sans-serif;max-width:480px;margin:auto;padding:24px">
-        <h2 style="color:#111">Your Data Export is Ready</h2>
-        <p style="color:#444">Your Replate data export has been generated. You can download it using the link below.</p>
-        <p style="color:#888">This link expires on <strong style="color:#111">${expiresAt.toLocaleDateString('en-US', { weekday:'long', year:'numeric', month:'long', day:'numeric' })}</strong>.</p>
-        <div style="text-align:center;margin:28px 0">
-          <a href="${fullUrl}" style="background:#4f46e5;color:white;padding:12px 28px;border-radius:8px;
-             text-decoration:none;font-weight:600;display:inline-block">Download My Data</a>
+      <div style="background-color:#ffffff;font-family:Inter,Arial,sans-serif;max-width:480px;margin:auto;padding:24px;">
+        <div style="border:1px solid #E2E8F0;border-radius:16px;padding:28px;background-color:#ffffff;">
+          <p style="font-size:12px;letter-spacing:0.08em;text-transform:uppercase;color:#64748B;margin:0 0 10px;">Replate Nutrition</p>
+          <h2 style="color:#0F172A;font-size:22px;margin:0 0 8px;">Your Data Export is Ready</h2>
+          <p style="color:#334155;font-size:15px;line-height:1.6;margin:0 0 12px;">Your Replate data export has been generated. You can download it using the link below.</p>
+          <p style="color:#475569;font-size:14px;margin:0 0 24px;">This link expires on <strong style="color:#0F172A;">${expiresAt.toLocaleDateString('en-US', { weekday:'long', year:'numeric', month:'long', day:'numeric' })}</strong>.</p>
+          <div style="text-align:center;margin:0 0 24px;">
+            <a href="${fullUrl}" style="background:#4f46e5;color:#ffffff;padding:12px 28px;border-radius:10px;text-decoration:none;font-weight:600;display:inline-block;font-size:15px;">Download My Data</a>
+          </div>
+          <p style="color:#6B7280;font-size:13px;">You can also find this link in Settings &rarr; Security &rarr; Download your data.</p>
         </div>
-        <p style="color:#888;font-size:12px">You can also find this link in Settings → Security → Download your data.</p>
       </div>`,
   });
 }
@@ -125,7 +129,7 @@ async function buildExportPdf(userId: string): Promise<string> {
       },
     },
   });
-  if (!user) throw new AppError('User not found', 404);
+  if (!user) throw new AppError(404, 'User not found');
 
   const exportsDir = path.resolve('uploads/exports');
   fs.mkdirSync(exportsDir, { recursive: true });
@@ -262,14 +266,14 @@ router.post('/request', authenticate, async (req: AuthRequest, res: Response, ne
     const { reason } = z.object({ reason: z.string().trim().min(1).max(300) }).parse(req.body);
     const redis = getRedis();
     const code = String(Math.floor(100000 + Math.random() * 900000));
-    await redis.setex(exportCodeKey(req.user!.userId), 300, String(code));
-    await redis.setex(exportReasonKey(req.user!.userId), 300, String(reason));
+    await redis.set(exportCodeKey(req.user!.userId), String(code), 'EX', 300);
+    await redis.set(exportReasonKey(req.user!.userId), String(reason), 'EX', 300);
 
     const user = await prisma.user.findUnique({
       where: { id: req.user!.userId },
       select: { email: true },
     });
-    if (!user) throw new AppError('User not found', 404);
+    if (!user) throw new AppError(404, 'User not found');
 
     await sendCodeEmail(user.email, code);
     await prisma.user.update({
@@ -286,7 +290,7 @@ router.post('/verify', authenticate, async (req: AuthRequest, res: Response, nex
     const { code } = z.object({ code: z.string().trim().length(6) }).parse(req.body);
     const redis = getRedis();
     const storedCode = await redis.get(exportCodeKey(req.user!.userId));
-    if (!storedCode || storedCode !== code) throw new AppError('Invalid or expired code', 400);
+    if (!storedCode || storedCode !== code) throw new AppError(400, 'Invalid or expired code');
 
     const reason = await redis.get(exportReasonKey(req.user!.userId)) ?? 'Not specified';
     await redis.del(exportCodeKey(req.user!.userId));
@@ -296,7 +300,7 @@ router.post('/verify', authenticate, async (req: AuthRequest, res: Response, nex
       where: { id: req.user!.userId },
       select: { email: true },
     });
-    if (!user) throw new AppError('User not found', 404);
+    if (!user) throw new AppError(404, 'User not found');
 
     await sendAdminRequestEmail(req.user!.userId, user.email, reason);
     res.json({ ok: true });
@@ -321,7 +325,7 @@ router.post('/admin/approve', async (req: Request, res: Response, next: NextFunc
   try {
     const authHeader = req.headers.authorization;
     if (!authHeader || authHeader !== `Bearer ${env.ADMIN_SECRET}`) {
-      throw new AppError('Forbidden', 403);
+      throw new AppError(403, 'Forbidden');
     }
     const { userId } = z.object({ userId: z.string().uuid() }).parse(req.body);
 
@@ -329,7 +333,7 @@ router.post('/admin/approve', async (req: Request, res: Response, next: NextFunc
       where: { id: userId },
       select: { email: true, fullName: true },
     });
-    if (!user) throw new AppError('User not found', 404);
+    if (!user) throw new AppError(404, 'User not found');
 
     const exportUrl = await buildExportPdf(userId);
     const expiresAt = new Date(Date.now() + 72 * 60 * 60 * 1000);

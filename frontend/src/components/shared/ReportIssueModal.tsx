@@ -14,7 +14,7 @@
  */
 
 import { useState } from 'react';
-import { AlertTriangle, MessageSquarePlus, Send, Loader2 } from 'lucide-react';
+import { AlertTriangle, MessageSquarePlus, Send, Loader2, X } from 'lucide-react';
 import { useMutation } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import { useToast } from '@/components/ui/toast';
@@ -109,28 +109,59 @@ interface ReportIssueButtonProps {
 }
 
 export function ReportIssueButton({ workflow, metadata, className }: ReportIssueButtonProps) {
-  const [open, setOpen] = useState(false);
+  const [modalOpen, setModalOpen] = useState(false);
+  const [expanded, setExpanded] = useState(false);
 
   return (
     <>
-      <button
-        onClick={() => setOpen(true)}
-        title="Report an issue"
+      {/* Collapsed: icon-only pill. Expanded: slides out to show label + close */}
+      <div
         className={cn(
-          'fixed bottom-[calc(5.5rem+env(safe-area-inset-bottom,0px))] right-4 z-40 lg:bottom-6 lg:right-6',
-          'flex items-center gap-2 rounded-full bg-amber-500 text-white shadow-lg',
-          'px-4 py-2.5 text-xs font-semibold',
-          'hover:bg-amber-600 active:scale-95 transition-all duration-200',
+          // Position: mobile sits above the bottom nav bar; desktop sits above the End Session bar
+          'fixed bottom-[calc(5.5rem+env(safe-area-inset-bottom,0px))] right-4 z-40',
+          'lg:bottom-24 lg:right-6',
+          'flex items-center gap-0 overflow-hidden',
+          'rounded-full bg-amber-500 text-white shadow-lg transition-all duration-200',
+          expanded ? 'gap-0' : '',
           className
         )}
       >
-        <MessageSquarePlus className="h-4 w-4 shrink-0" />
-        <span>Report Issue</span>
-      </button>
+        {/* Always-visible icon button — toggles expanded */}
+        <button
+          onClick={() => setExpanded((v) => !v)}
+          title={expanded ? 'Collapse' : 'Report an issue'}
+          className="flex items-center justify-center w-10 h-10 rounded-full hover:bg-amber-600 active:scale-95 transition-all duration-200 shrink-0"
+        >
+          <MessageSquarePlus className="h-4 w-4" />
+        </button>
+
+        {/* Expanded label + action */}
+        <div
+          className={cn(
+            'flex items-center gap-1 overflow-hidden transition-all duration-200',
+            expanded ? 'max-w-[160px] pr-3' : 'max-w-0 pr-0'
+          )}
+        >
+          <button
+            onClick={() => { setExpanded(false); setModalOpen(true); }}
+            className="text-xs font-semibold whitespace-nowrap hover:underline"
+          >
+            Report Issue
+          </button>
+          <span className="text-amber-300 mx-1 text-xs">·</span>
+          <button
+            onClick={() => setExpanded(false)}
+            className="text-amber-200 hover:text-white transition-colors"
+            title="Collapse"
+          >
+            <X className="h-3 w-3" />
+          </button>
+        </div>
+      </div>
 
       <ReportIssueModal
-        open={open}
-        onClose={() => setOpen(false)}
+        open={modalOpen}
+        onClose={() => setModalOpen(false)}
         workflow={workflow}
         metadata={metadata}
       />
