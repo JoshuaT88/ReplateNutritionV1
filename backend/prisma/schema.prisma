@@ -61,6 +61,7 @@ model User {
   ownedHousehold        Household?      @relation("HouseholdOwner")
   householdMembership   HouseholdMember?
   storeCorrections      StoreCorrection[]
+  savedStores           SavedStore[]
   inAppNotifications    InAppNotification[]
   familySuggestions     FamilyMemberSuggestion[]
   dataExportUrl         String?   @map("data_export_url")
@@ -516,6 +517,35 @@ model HouseholdMember {
   @@index([householdId])
   @@index([inviteToken])
   @@map("household_members")
+}
+
+model SavedStore {
+  id           String    @id @default(uuid())
+  userId       String    @map("user_id")
+  name         String
+  address      String?
+  city         String?
+  state        String?
+  zipCode      String?   @map("zip_code")
+  placeId      String?   @map("place_id")
+  lat          Float?
+  lng          Float?
+  taxRate      Float?    @map("tax_rate")
+  distance     String?
+  isPreferred  Boolean   @default(false) @map("is_preferred")
+  aisleData    Json?     @map("aisle_data")
+  priceData    Json?     @map("price_data")
+  lastVerified DateTime? @map("last_verified")
+  source       String    @default("search")
+  createdAt    DateTime  @default(now()) @map("created_at")
+  updatedAt    DateTime  @updatedAt @map("updated_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, name])
+  @@index([userId])
+  @@index([isPreferred])
+  @@map("saved_stores")
 }
 
 model StoreCorrection {

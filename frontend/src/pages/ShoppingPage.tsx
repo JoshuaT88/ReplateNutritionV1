@@ -5,7 +5,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import {
   ShoppingCart, Plus, Sparkles, Trash2, Store, PlayCircle, Loader2,
   Search, ChevronDown, MapPin, DollarSign, AlertTriangle, Package, Pencil, Check, X,
-  Navigation, Calendar, Flag
+  Navigation, Calendar, Flag, SlidersHorizontal
 } from 'lucide-react';
 import { api } from '@/lib/api';
 import { Button } from '@/components/ui/button';
@@ -38,6 +38,12 @@ export default function ShoppingPage() {
   const { toast } = useToast();
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   const [showAddItem, setShowAddItem] = useState(false);
+  const [showSettings, setShowSettings] = useState(() => localStorage.getItem('shopping_settings_open') === '1');
+  const toggleSettings = () => {
+    const next = !showSettings;
+    setShowSettings(next);
+    localStorage.setItem('shopping_settings_open', next ? '1' : '0');
+  };
 
   useEffect(() => {
     const id = localStorage.getItem('active_session_id');
@@ -326,24 +332,8 @@ export default function ShoppingPage() {
           <p className="text-sm text-muted mt-0.5">
             {items.length} item{items.length !== 1 ? 's' : ''}
             {totalEstimate > 0 && <> · Est. {formatCurrency(totalEstimate)}</>}
+            {listStore && <> · <span className="text-primary font-medium">{listStore}</span></>}
           </p>
-          {/* Store selector (T25) */}
-          <div className="flex items-center gap-2 mt-2">
-            <Store className="h-3.5 w-3.5 text-muted" />
-            <select
-              value={listStore}
-              onChange={(e) => { setListStore(e.target.value); localStorage.setItem('list_store', e.target.value); }}
-              className="text-xs rounded-lg border border-card-border dark:border-[#374151] bg-white dark:bg-[#283447] dark:text-[#F9FAFB] px-2 py-1 focus:outline-none focus:ring-2 focus:ring-primary/30"
-            >
-              <option value="">No store selected</option>
-              {preferredStores.map((s) => (
-                <option key={s} value={s}>{s}</option>
-              ))}
-            </select>
-            {listStore && (
-              <span className="text-xs text-muted">Items will be assigned to <strong>{listStore}</strong></span>
-            )}
-          </div>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
           <Button variant="outline" onClick={() => setShowStoreFinder(true)}>
@@ -393,75 +383,185 @@ export default function ShoppingPage() {
       )}
 
       {/* Budget Widget - Monthly */}
-      {monthlyBudget > 0 && (
-        <Card>
-          <CardContent className="p-4">
-            <div className="flex items-center justify-between mb-2">
-              <div className="flex items-center gap-2">
-                <DollarSign className="h-4 w-4 text-primary" />
-                <span className="text-sm font-semibold">Monthly Budget</span>
-              </div>
-              <span className={cn(
-                'text-sm font-bold',
-                budgetRemaining > 0 ? 'text-emerald-600' : 'text-red-600'
-              )}>
-                {formatCurrency(budgetRemaining)} remaining
-              </span>
-            </div>
-            <div className="h-2 rounded-full bg-slate-100 overflow-hidden">
-              <div
-                className={cn(
-                  'h-full rounded-full transition-all',
-                  monthlySpent / monthlyBudget > 0.9 ? 'bg-red-500' :
-                  monthlySpent / monthlyBudget > 0.7 ? 'bg-amber-500' : 'bg-emerald-500'
-                )}
-                style={{ width: `${Math.min(100, (monthlySpent / monthlyBudget) * 100)}%` }}
-              />
-            </div>
-            <div className="flex justify-between mt-1.5 text-[10px] text-muted">
-              <span>Spent: {formatCurrency(monthlySpent)}</span>
-              <span>Budget: {formatCurrency(monthlyBudget)}</span>
-            </div>
-          </CardContent>
-        </Card>
-      )}
 
       {/* Per-trip Budget Bar (T23) */}
-      {perTripBudget > 0 && totalEstimate > 0 && (
-        <Card>
-          <CardContent className="p-4">
-            <div className="flex items-center justify-between mb-2">
-              <div className="flex items-center gap-2">
-                <Calendar className="h-4 w-4 text-primary" />
-                <span className="text-sm font-semibold">This Trip</span>
-              </div>
-              <span className={cn(
-                'text-sm font-bold',
-                totalEstimate > perTripBudget ? 'text-red-600' :
-                totalEstimate / perTripBudget > 0.8 ? 'text-amber-600' : 'text-emerald-600'
-              )}>
-                {totalEstimate > perTripBudget
-                  ? `${formatCurrency(totalEstimate - perTripBudget)} over`
-                  : `${formatCurrency(perTripBudget - totalEstimate)} left`}
-              </span>
-            </div>
-            <div className="h-2 rounded-full bg-slate-100 overflow-hidden">
-              <div
-                className={cn(
-                  'h-full rounded-full transition-all',
-                  totalEstimate / perTripBudget >= 1 ? 'bg-red-500' :
-                  totalEstimate / perTripBudget >= 0.8 ? 'bg-amber-500' : 'bg-emerald-500'
+
+      {/* Shopping Preferences Panel */}
+      <div className="rounded-2xl border border-card-border overflow-hidden">
+        <button
+          onClick={toggleSettings}
+          className="w-full flex items-center justify-between px-4 py-3 hover:bg-surface-hover transition-colors"
+        >
+          <div className="flex items-center gap-2 min-w-0">
+            <SlidersHorizontal className="h-4 w-4 text-muted shrink-0" />
+            <span className="text-sm font-medium">Shopping Preferences</span>
+            {!showSettings && (
+              <div className="flex items-center gap-1.5 ml-1 flex-wrap">
+                {listStore && (
+                  <Badge variant="secondary" className="text-[10px]">{listStore}</Badge>
                 )}
-                style={{ width: `${Math.min(100, (totalEstimate / perTripBudget) * 100)}%` }}
-              />
-            </div>
-            <div className="flex justify-between mt-1.5 text-[10px] text-muted">
-              <span>List: {formatCurrency(totalEstimate)}</span>
-              <span>Per-trip: {formatCurrency(perTripBudget)}</span>
-            </div>
-          </CardContent>
-        </Card>
-      )}
+                {perTripBudget > 0 && totalEstimate > 0 && (
+                  <Badge
+                    variant="secondary"
+                    className={cn(
+                      'text-[10px]',
+                      totalEstimate > perTripBudget
+                        ? 'bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300'
+                        : totalEstimate / perTripBudget > 0.8
+                        ? 'bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300'
+                        : 'bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-300'
+                    )}
+                  >
+                    {totalEstimate > perTripBudget
+                      ? `${formatCurrency(totalEstimate - perTripBudget)} over budget`
+                      : `${formatCurrency(perTripBudget - totalEstimate)} left this trip`}
+                  </Badge>
+                )}
+                {monthlyBudget > 0 && (
+                  <Badge
+                    variant="secondary"
+                    className={cn('text-[10px]', budgetRemaining > 0 ? 'bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-300' : 'bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300')}
+                  >
+                    {formatCurrency(Math.abs(budgetRemaining))} {budgetRemaining >= 0 ? 'left monthly' : 'over monthly'}
+                  </Badge>
+                )}
+              </div>
+            )}
+          </div>
+          <ChevronDown className={cn('h-4 w-4 text-muted transition-transform shrink-0', showSettings && 'rotate-180')} />
+        </button>
+
+        <AnimatePresence initial={false}>
+          {showSettings && (
+            <motion.div
+              key="settings-panel"
+              initial={{ height: 0 }}
+              animate={{ height: 'auto' }}
+              exit={{ height: 0 }}
+              transition={{ duration: 0.2, ease: 'easeInOut' }}
+              className="overflow-hidden"
+            >
+              <div className="px-4 pb-4 pt-3 border-t border-card-border space-y-4">
+                {/* Row 1: Store + ZIP */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div>
+                    <label className="text-xs font-medium text-muted block mb-1.5">
+                      <Store className="h-3 w-3 inline mr-1" />
+                      Default store for new items
+                    </label>
+                    <select
+                      value={listStore}
+                      onChange={(e) => { setListStore(e.target.value); localStorage.setItem('list_store', e.target.value); }}
+                      className="flex h-9 w-full rounded-xl border border-card-border dark:border-[#374151] bg-white dark:bg-[#283447] dark:text-[#F9FAFB] px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary"
+                    >
+                      <option value="">No store selected</option>
+                      {preferredStores.map((s) => (
+                        <option key={s} value={s}>{s}</option>
+                      ))}
+                    </select>
+                    {preferredStores.length === 0 && (
+                      <p className="text-[11px] text-muted mt-1">
+                        <button onClick={() => navigate('/settings')} className="text-primary hover:underline">Add preferred stores</button> in Settings first.
+                      </p>
+                    )}
+                  </div>
+                  <div>
+                    <label className="text-xs font-medium text-muted block mb-1.5">
+                      <MapPin className="h-3 w-3 inline mr-1" />
+                      ZIP code (store finder &amp; estimates)
+                    </label>
+                    <Input
+                      value={zipCode}
+                      onChange={(e) => setZipCode(e.target.value.replace(/\D/g, '').slice(0, 5))}
+                      placeholder="e.g. 37920"
+                      maxLength={5}
+                      className="h-9 text-sm"
+                    />
+                  </div>
+                </div>
+
+                {/* Row 2: Budget bars */}
+                {(monthlyBudget > 0 || (perTripBudget > 0 && totalEstimate > 0)) && (
+                  <div className="space-y-3">
+                    <p className="text-[11px] font-semibold uppercase tracking-wider text-muted">Budget</p>
+                    {monthlyBudget > 0 && (
+                      <div>
+                        <div className="flex items-center justify-between mb-1">
+                          <div className="flex items-center gap-1.5">
+                            <DollarSign className="h-3.5 w-3.5 text-muted" />
+                            <span className="text-xs font-medium">Monthly Budget</span>
+                          </div>
+                          <span className={cn('text-xs font-bold', budgetRemaining > 0 ? 'text-emerald-600' : 'text-red-600')}>
+                            {formatCurrency(budgetRemaining)} remaining
+                          </span>
+                        </div>
+                        <div className="h-1.5 rounded-full bg-slate-100 dark:bg-[#374151] overflow-hidden">
+                          <div
+                            className={cn('h-full rounded-full transition-all', monthlySpent / monthlyBudget > 0.9 ? 'bg-red-500' : monthlySpent / monthlyBudget > 0.7 ? 'bg-amber-500' : 'bg-emerald-500')}
+                            style={{ width: `${Math.min(100, (monthlySpent / monthlyBudget) * 100)}%` }}
+                          />
+                        </div>
+                        <div className="flex justify-between mt-0.5 text-[10px] text-muted">
+                          <span>Spent: {formatCurrency(monthlySpent)}</span>
+                          <span>Budget: {formatCurrency(monthlyBudget)}</span>
+                        </div>
+                      </div>
+                    )}
+                    {perTripBudget > 0 && totalEstimate > 0 && (
+                      <div>
+                        <div className="flex items-center justify-between mb-1">
+                          <div className="flex items-center gap-1.5">
+                            <Calendar className="h-3.5 w-3.5 text-muted" />
+                            <span className="text-xs font-medium">This Trip</span>
+                          </div>
+                          <span className={cn('text-xs font-bold', totalEstimate > perTripBudget ? 'text-red-600' : totalEstimate / perTripBudget > 0.8 ? 'text-amber-600' : 'text-emerald-600')}>
+                            {totalEstimate > perTripBudget
+                              ? `${formatCurrency(totalEstimate - perTripBudget)} over`
+                              : `${formatCurrency(perTripBudget - totalEstimate)} left`}
+                          </span>
+                        </div>
+                        <div className="h-1.5 rounded-full bg-slate-100 dark:bg-[#374151] overflow-hidden">
+                          <div
+                            className={cn('h-full rounded-full transition-all', totalEstimate / perTripBudget >= 1 ? 'bg-red-500' : totalEstimate / perTripBudget >= 0.8 ? 'bg-amber-500' : 'bg-emerald-500')}
+                            style={{ width: `${Math.min(100, (totalEstimate / perTripBudget) * 100)}%` }}
+                          />
+                        </div>
+                        <div className="flex justify-between mt-0.5 text-[10px] text-muted">
+                          <span>List: {formatCurrency(totalEstimate)}</span>
+                          <span>Per-trip: {formatCurrency(perTripBudget)}</span>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Row 3: Shopping schedule */}
+                {(preferences?.shoppingDay || daysUntilNextTrip !== null) && (
+                  <div>
+                    <p className="text-[11px] font-semibold uppercase tracking-wider text-muted mb-1.5">Schedule</p>
+                    <div className="flex items-center gap-2 text-sm">
+                      <Calendar className="h-4 w-4 text-muted shrink-0" />
+                      <span>
+                        {preferences?.shoppingDay && <strong className="capitalize">{preferences.shoppingDay}s</strong>}
+                        {daysUntilNextTrip !== null && (
+                          <span className="text-muted"> &mdash; next trip in <strong className="text-foreground">{daysUntilNextTrip} day{daysUntilNextTrip !== 1 ? 's' : ''}</strong></span>
+                        )}
+                      </span>
+                    </div>
+                  </div>
+                )}
+
+                {/* Footer link */}
+                <div className="pt-1 border-t border-card-border">
+                  <button onClick={() => navigate('/settings')} className="text-xs text-primary hover:underline">
+                    Manage all shopping settings →
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </div>
 
       {/* Search + Store filter */}
       <div className="flex flex-col gap-2">
@@ -1355,7 +1455,7 @@ function StoreGroup({ storeName, storeItems, onRemove, onUpdate, preferredStores
       </div>
 
       {/* Category groups */}
-      <div className="space-y-0 divide-y divide-card-border">
+      <div className="space-y-1.5 px-2 py-2">
         {Object.entries(byCategory).sort(([a], [b]) => a.localeCompare(b)).map(([category, catItems]) => (
           <CategoryGroup
             key={`${storeName}-${category}`}
