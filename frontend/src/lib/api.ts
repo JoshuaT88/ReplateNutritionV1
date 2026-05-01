@@ -1,4 +1,4 @@
-import type { AuthResponse, User, UserPreferences, Profile, ProfileFormData, Recommendation, MealPlan, CustomMeal, ShoppingItem, ShoppingHistory, ShoppingSession, StoreResult, ReceiptOcrResult, ActivityLogEntry, Household, HouseholdMember, DataExportStatus } from '@/types';
+import type { AuthResponse, User, UserPreferences, Profile, ProfileFormData, Recommendation, MealPlan, CustomMeal, ShoppingItem, ShoppingHistory, ShoppingSession, StoreResult, ReceiptOcrResult, ActivityLogEntry, Household, HouseholdMember, DataExportStatus, SavedStore } from '@/types';
 
 const API_BASE = '/api';
 
@@ -282,19 +282,35 @@ class ApiClient {
   deleteShoppingItem(id: string) {
     return this.request(`/shopping/list/${id}`, { method: 'DELETE' });
   }
-  generateShoppingFromMeals(profileIds: string[], days: number) {
+  generateShoppingFromMeals(profileIds: string[], days: number, assignedStore?: string) {
     return this.request<ShoppingItem[]>('/shopping/generate-from-meals', {
-      method: 'POST', body: JSON.stringify({ profileIds, days }),
+      method: 'POST', body: JSON.stringify({ profileIds, days, assignedStore }),
     });
   }
   findStores(zipCode: string) {
     return this.request<StoreResult[]>('/shopping/find-stores', {
       method: 'POST', body: JSON.stringify({ zipCode }),
     });
-  }  findStoresByZip(zip: string) {
-    return this.request<{ name: string; address: string }[]>(`/shopping/stores-by-zip?zip=${encodeURIComponent(zip)}`);
-  }  searchPreferredStores(q: string) {
-    return this.request<{ name: string; address: string }[]>(`/shopping/search-stores?q=${encodeURIComponent(q)}`);
+  }
+  findOtherStores(params: { storeName: string; radiusLabel: string; originZip?: string; originCityState?: string }) {
+    return this.request<Array<{ name: string; address: string; placeId: string; distance?: string; rating?: number }>>('/shopping/find-other-stores', {
+      method: 'POST', body: JSON.stringify(params),
+    });
+  }
+  getSavedStores() { return this.request<SavedStore[]>('/shopping/saved-stores'); }
+  saveStore(data: Partial<SavedStore>) {
+    return this.request<SavedStore>('/shopping/saved-stores', { method: 'POST', body: JSON.stringify(data) });
+  }
+  updateSavedStore(id: string, data: Partial<SavedStore>) {
+    return this.request<SavedStore>(`/shopping/saved-stores/${id}`, { method: 'PATCH', body: JSON.stringify(data) });
+  }
+  deleteSavedStore(id: string) {
+    return this.request(`/shopping/saved-stores/${id}`, { method: 'DELETE' });
+  }
+  searchPreferredStores(cityStateZip: string, storeName?: string) {
+    return this.request<Array<{ name: string; address: string; placeId: string }>>('/shopping/preferred-store-search', {
+      method: 'POST', body: JSON.stringify({ cityStateZip, storeName }),
+    });
   }
 
   // === Shopping Sessions ===

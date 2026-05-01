@@ -5,7 +5,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import {
   ShoppingCart, Plus, Sparkles, Trash2, Store, PlayCircle, Loader2,
   Search, ChevronDown, MapPin, DollarSign, AlertTriangle, Package, Pencil, Check, X,
-  Navigation, Calendar, Flag, SlidersHorizontal
+  Navigation, Calendar, Flag, Star, StarOff
 } from 'lucide-react';
 import { api } from '@/lib/api';
 import { Button } from '@/components/ui/button';
@@ -20,11 +20,14 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { useToast } from '@/components/ui/toast';
 import { cn, formatCurrency } from '@/lib/utils';
+import { getTaxRate } from '@/lib/stateTaxRates';
 
 const KROGER_BANNERS = ['kroger','fred meyer','king soopers','ralphs',"smith's","fry's",'harris teeter','dillons',"baker's",'city market','gerbes','jay c','food 4 less','foods co','pick n save',"mariano's",'pay-less'];
 const isKrogerStore = (name: string) => { const l = name.toLowerCase(); return KROGER_BANNERS.some((b) => l.includes(b)); };
 import { PageTutorial } from '@/components/shared/PageTutorial';
-import type { ShoppingItem } from '@/types';
+import type { ShoppingItem, SavedStore } from '@/types';
+
+const RADIUS_OPTIONS = ['5mi', '10mi', '20mi', '30mi', '50mi'] as const;
 
 const PRIORITY_COLORS: Record<string, string> = {
   HIGH: 'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800/50 text-red-700 dark:text-red-300',
@@ -38,19 +41,26 @@ export default function ShoppingPage() {
   const { toast } = useToast();
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   const [showAddItem, setShowAddItem] = useState(false);
-  const [showSettings, setShowSettings] = useState(() => localStorage.getItem('shopping_settings_open') === '1');
-  const toggleSettings = () => {
-    const next = !showSettings;
-    setShowSettings(next);
-    localStorage.setItem('shopping_settings_open', next ? '1' : '0');
-  };
+  const [showBudgetOpen, setShowBudgetOpen] = useState(true);
 
   useEffect(() => {
     const id = localStorage.getItem('active_session_id');
     if (id) setActiveSessionId(id);
   }, []);
   const [showGenerateFromMeals, setShowGenerateFromMeals] = useState(false);
+  const [generateStore, setGenerateStore] = useState<string>(''); // store chosen in From Meals dialog
   const [showStoreFinder, setShowStoreFinder] = useState(false);
+  // Find Other Stores state
+  const [otherStoreName, setOtherStoreName] = useState('');
+  const [otherStoreRadius, setOtherStoreRadius] = useState<string>('10mi');
+  const [otherStoreOrigin, setOtherStoreOrigin] = useState('');
+  const [otherStoreResults, setOtherStoreResults] = useState<any[]>([]);
+  const [otherStoreSearching, setOtherStoreSearching] = useState(false);
+  const [otherStoreSelectedIdx, setOtherStoreSelectedIdx] = useState<number | null>(null);
+  const [otherStoreAssignIds, setOtherStoreAssignIds] = useState<Set<string>>(new Set());
+  // Start Shopping store-selector modal
+  const [showStartShopping, setShowStartShopping] = useState(false);
+  const [startShoppingStore, setStartShoppingStore] = useState<string>('');
   const [showBudgetWarning, setShowBudgetWarning] = useState(false);
   const [pendingStoreName, setPendingStoreName] = useState<string | undefined>(undefined);
   const [selectedStoreIdx, setSelectedStoreIdx] = useState<number | null>(null);
@@ -62,12 +72,11 @@ export default function ShoppingPage() {
   const [newItemNotes, setNewItemNotes] = useState('');
   const [newItemDealNote, setNewItemDealNote] = useState('');
   const [newItemEstPrice, setNewItemEstPrice] = useState('');
-  const [listStore, setListStore] = useState<string>(() => localStorage.getItem('list_store') || '');
+  const [newItemStore, setNewItemStore] = useState<string>(''); // replaces listStore for add item dialog
   const [search, setSearch] = useState('');
   const [filterStore, setFilterStore] = useState<string>('all');
   const [storeSearch, setStoreSearch] = useState('');
   const [customStoreAddress, setCustomStoreAddress] = useState('');
-  const [zipCode, setZipCode] = useState('');
   const [budgetPromptDismissed] = useState(() => localStorage.getItem('budget_prompt_dismissed') === '1');
   const [showReportModal, setShowReportModal] = useState(false);
   const [reportingStore, setReportingStore] = useState<{ name: string; address: string } | null>(null);
@@ -98,13 +107,10 @@ export default function ShoppingPage() {
     queryFn: () => api.getPreferences(),
   });
 
-  // Pre-fill zip code from saved preferences
-  useEffect(() => {
-    if (preferences?.zipCode && !zipCode) {
-      setZipCode(preferences.zipCode);
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [preferences?.zipCode]);
+  const { data: savedStores = [] } = useQuery<SavedStore[]>({
+    queryKey: ['savedStores'],
+    queryFn: () => api.getSavedStores(),
+  });
 
   const { data: mealPlans } = useQuery({
     queryKey: ['mealPlans'],
@@ -114,12 +120,6 @@ export default function ShoppingPage() {
   const { data: shoppingHistory } = useQuery({
     queryKey: ['shoppingHistory'],
     queryFn: () => api.getShoppingHistory(),
-  });
-
-  const { data: stores, isFetching: storesFetching } = useQuery({
-    queryKey: ['stores', zipCode],
-    queryFn: () => api.findStores(zipCode),
-    enabled: zipCode.length === 5 && showStoreFinder,
   });
 
   const addItemMutation = useMutation({
@@ -132,7 +132,7 @@ export default function ShoppingPage() {
       notes: newItemNotes || undefined,
       dealNote: newItemDealNote || undefined,
       estimatedPrice: newItemEstPrice ? parseFloat(newItemEstPrice) : undefined,
-      assignedStore: listStore || undefined,
+      assignedStore: newItemStore || undefined,
     }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['shoppingList'] });
@@ -144,6 +144,7 @@ export default function ShoppingPage() {
       setNewItemNotes('');
       setNewItemDealNote('');
       setNewItemEstPrice('');
+      setNewItemStore('');
       setShowAddItem(false);
       toast('success', 'Item added');
     },
@@ -153,12 +154,13 @@ export default function ShoppingPage() {
   const generateFromMealsMutation = useMutation({
     mutationFn: () => {
       const profileIds = profiles?.map((p) => p.id) || [];
-      return api.generateShoppingFromMeals(profileIds, 7);
+      return api.generateShoppingFromMeals(profileIds, 7, generateStore || undefined);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['shoppingList'] });
       toast('success', 'Shopping list generated from meal plan!');
       setShowGenerateFromMeals(false);
+      setGenerateStore('');
     },
     onError: (err: Error) => toast('error', 'Failed to generate', err.message),
   });
@@ -332,12 +334,11 @@ export default function ShoppingPage() {
           <p className="text-sm text-muted mt-0.5">
             {items.length} item{items.length !== 1 ? 's' : ''}
             {totalEstimate > 0 && <> · Est. {formatCurrency(totalEstimate)}</>}
-            {listStore && <> · <span className="text-primary font-medium">{listStore}</span></>}
           </p>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
           <Button variant="outline" onClick={() => setShowStoreFinder(true)}>
-            <Store className="h-4 w-4" /> Find Stores
+            <Store className="h-4 w-4" /> Find Other Stores
           </Button>
           <Button variant="outline" onClick={() => setShowGenerateFromMeals(true)}>
             <Sparkles className="h-4 w-4" /> From Meals
@@ -346,7 +347,7 @@ export default function ShoppingPage() {
             <Plus className="h-4 w-4" /> Add Item
           </Button>
           <Button
-            onClick={() => tryStartSession()}
+            onClick={() => setShowStartShopping(true)}
             disabled={items.length === 0 || startSessionMutation.isPending}
           >
             <PlayCircle className="h-4 w-4" /> Start Shopping
@@ -382,185 +383,92 @@ export default function ShoppingPage() {
         </div>
       )}
 
-      {/* Budget Widget - Monthly */}
-
-      {/* Per-trip Budget Bar (T23) */}
-
-      {/* Shopping Preferences Panel */}
-      <div className="rounded-2xl border border-card-border overflow-hidden">
-        <button
-          onClick={toggleSettings}
-          className="w-full flex items-center justify-between px-4 py-3 hover:bg-surface-hover transition-colors"
-        >
-          <div className="flex items-center gap-2 min-w-0">
-            <SlidersHorizontal className="h-4 w-4 text-muted shrink-0" />
-            <span className="text-sm font-medium">Shopping Preferences</span>
-            {!showSettings && (
-              <div className="flex items-center gap-1.5 ml-1 flex-wrap">
-                {listStore && (
-                  <Badge variant="secondary" className="text-[10px]">{listStore}</Badge>
-                )}
-                {perTripBudget > 0 && totalEstimate > 0 && (
-                  <Badge
-                    variant="secondary"
-                    className={cn(
-                      'text-[10px]',
-                      totalEstimate > perTripBudget
-                        ? 'bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300'
-                        : totalEstimate / perTripBudget > 0.8
-                        ? 'bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300'
-                        : 'bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-300'
-                    )}
-                  >
-                    {totalEstimate > perTripBudget
-                      ? `${formatCurrency(totalEstimate - perTripBudget)} over budget`
-                      : `${formatCurrency(perTripBudget - totalEstimate)} left this trip`}
-                  </Badge>
-                )}
-                {monthlyBudget > 0 && (
-                  <Badge
-                    variant="secondary"
-                    className={cn('text-[10px]', budgetRemaining > 0 ? 'bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-300' : 'bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300')}
-                  >
-                    {formatCurrency(Math.abs(budgetRemaining))} {budgetRemaining >= 0 ? 'left monthly' : 'over monthly'}
-                  </Badge>
-                )}
-              </div>
-            )}
-          </div>
-          <ChevronDown className={cn('h-4 w-4 text-muted transition-transform shrink-0', showSettings && 'rotate-180')} />
-        </button>
-
-        <AnimatePresence initial={false}>
-          {showSettings && (
-            <motion.div
-              key="settings-panel"
-              initial={{ height: 0 }}
-              animate={{ height: 'auto' }}
-              exit={{ height: 0 }}
-              transition={{ duration: 0.2, ease: 'easeInOut' }}
-              className="overflow-hidden"
-            >
-              <div className="px-4 pb-4 pt-3 border-t border-card-border space-y-4">
-                {/* Row 1: Store + ZIP */}
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  <div>
-                    <label className="text-xs font-medium text-muted block mb-1.5">
-                      <Store className="h-3 w-3 inline mr-1" />
-                      Default store for new items
-                    </label>
-                    <select
-                      value={listStore}
-                      onChange={(e) => { setListStore(e.target.value); localStorage.setItem('list_store', e.target.value); }}
-                      className="flex h-9 w-full rounded-xl border border-card-border dark:border-[#374151] bg-white dark:bg-[#283447] dark:text-[#F9FAFB] px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary"
-                    >
-                      <option value="">No store selected</option>
-                      {preferredStores.map((s) => (
-                        <option key={s} value={s}>{s}</option>
-                      ))}
-                    </select>
-                    {preferredStores.length === 0 && (
-                      <p className="text-[11px] text-muted mt-1">
-                        <button onClick={() => navigate('/settings')} className="text-primary hover:underline">Add preferred stores</button> in Settings first.
-                      </p>
-                    )}
-                  </div>
-                  <div>
-                    <label className="text-xs font-medium text-muted block mb-1.5">
-                      <MapPin className="h-3 w-3 inline mr-1" />
-                      ZIP code (store finder &amp; estimates)
-                    </label>
-                    <Input
-                      value={zipCode}
-                      onChange={(e) => setZipCode(e.target.value.replace(/\D/g, '').slice(0, 5))}
-                      placeholder="e.g. 37920"
-                      maxLength={5}
-                      className="h-9 text-sm"
-                    />
-                  </div>
-                </div>
-
-                {/* Row 2: Budget bars */}
-                {(monthlyBudget > 0 || (perTripBudget > 0 && totalEstimate > 0)) && (
-                  <div className="space-y-3">
-                    <p className="text-[11px] font-semibold uppercase tracking-wider text-muted">Budget</p>
-                    {monthlyBudget > 0 && (
-                      <div>
-                        <div className="flex items-center justify-between mb-1">
-                          <div className="flex items-center gap-1.5">
-                            <DollarSign className="h-3.5 w-3.5 text-muted" />
-                            <span className="text-xs font-medium">Monthly Budget</span>
-                          </div>
-                          <span className={cn('text-xs font-bold', budgetRemaining > 0 ? 'text-emerald-600' : 'text-red-600')}>
-                            {formatCurrency(budgetRemaining)} remaining
-                          </span>
-                        </div>
-                        <div className="h-1.5 rounded-full bg-slate-100 dark:bg-[#374151] overflow-hidden">
-                          <div
-                            className={cn('h-full rounded-full transition-all', monthlySpent / monthlyBudget > 0.9 ? 'bg-red-500' : monthlySpent / monthlyBudget > 0.7 ? 'bg-amber-500' : 'bg-emerald-500')}
-                            style={{ width: `${Math.min(100, (monthlySpent / monthlyBudget) * 100)}%` }}
-                          />
-                        </div>
-                        <div className="flex justify-between mt-0.5 text-[10px] text-muted">
-                          <span>Spent: {formatCurrency(monthlySpent)}</span>
-                          <span>Budget: {formatCurrency(monthlyBudget)}</span>
-                        </div>
+      {/* Budget / Schedule + Saved Stores cards */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        {/* Budget & Schedule card */}
+        <div className="rounded-2xl border border-card-border overflow-hidden">
+          <button
+            onClick={() => setShowBudgetOpen(v => !v)}
+            className="w-full flex items-center justify-between px-4 py-3 hover:bg-surface-hover transition-colors"
+          >
+            <div className="flex items-center gap-2">
+              <DollarSign className="h-4 w-4 text-muted shrink-0" />
+              <span className="text-sm font-medium">Budget &amp; Schedule</span>
+            </div>
+            <ChevronDown className={cn('h-4 w-4 text-muted transition-transform shrink-0', showBudgetOpen && 'rotate-180')} />
+          </button>
+          <AnimatePresence initial={false}>
+            {showBudgetOpen && (
+              <motion.div key="budget-panel" initial={{ height: 0 }} animate={{ height: 'auto' }} exit={{ height: 0 }} transition={{ duration: 0.2 }} className="overflow-hidden">
+                <div className="px-4 pb-4 pt-3 border-t border-card-border space-y-4">
+                  {monthlyBudget > 0 && (
+                    <div>
+                      <div className="flex items-center justify-between mb-1">
+                        <span className="text-xs font-medium">Monthly Budget</span>
+                        <span className={cn('text-xs font-bold', budgetRemaining > 0 ? 'text-emerald-600' : 'text-red-600')}>{formatCurrency(budgetRemaining)} remaining</span>
                       </div>
-                    )}
-                    {perTripBudget > 0 && totalEstimate > 0 && (
-                      <div>
-                        <div className="flex items-center justify-between mb-1">
-                          <div className="flex items-center gap-1.5">
-                            <Calendar className="h-3.5 w-3.5 text-muted" />
-                            <span className="text-xs font-medium">This Trip</span>
-                          </div>
-                          <span className={cn('text-xs font-bold', totalEstimate > perTripBudget ? 'text-red-600' : totalEstimate / perTripBudget > 0.8 ? 'text-amber-600' : 'text-emerald-600')}>
-                            {totalEstimate > perTripBudget
-                              ? `${formatCurrency(totalEstimate - perTripBudget)} over`
-                              : `${formatCurrency(perTripBudget - totalEstimate)} left`}
-                          </span>
-                        </div>
-                        <div className="h-1.5 rounded-full bg-slate-100 dark:bg-[#374151] overflow-hidden">
-                          <div
-                            className={cn('h-full rounded-full transition-all', totalEstimate / perTripBudget >= 1 ? 'bg-red-500' : totalEstimate / perTripBudget >= 0.8 ? 'bg-amber-500' : 'bg-emerald-500')}
-                            style={{ width: `${Math.min(100, (totalEstimate / perTripBudget) * 100)}%` }}
-                          />
-                        </div>
-                        <div className="flex justify-between mt-0.5 text-[10px] text-muted">
-                          <span>List: {formatCurrency(totalEstimate)}</span>
-                          <span>Per-trip: {formatCurrency(perTripBudget)}</span>
-                        </div>
+                      <div className="h-1.5 rounded-full bg-slate-100 dark:bg-[#374151] overflow-hidden">
+                        <div className={cn('h-full rounded-full', monthlySpent / monthlyBudget > 0.9 ? 'bg-red-500' : monthlySpent / monthlyBudget > 0.7 ? 'bg-amber-500' : 'bg-emerald-500')} style={{ width: `${Math.min(100, (monthlySpent / monthlyBudget) * 100)}%` }} />
                       </div>
-                    )}
-                  </div>
-                )}
-
-                {/* Row 3: Shopping schedule */}
-                {(preferences?.shoppingDay || daysUntilNextTrip !== null) && (
-                  <div>
-                    <p className="text-[11px] font-semibold uppercase tracking-wider text-muted mb-1.5">Schedule</p>
+                      <div className="flex justify-between mt-0.5 text-[10px] text-muted">
+                        <span>Spent: {formatCurrency(monthlySpent)}</span>
+                        <span>Budget: {formatCurrency(monthlyBudget)}</span>
+                      </div>
+                    </div>
+                  )}
+                  {perTripBudget > 0 && totalEstimate > 0 && (
+                    <div>
+                      <div className="flex items-center justify-between mb-1">
+                        <span className="text-xs font-medium">This Trip</span>
+                        <span className={cn('text-xs font-bold', totalEstimate > perTripBudget ? 'text-red-600' : 'text-emerald-600')}>
+                          {totalEstimate > perTripBudget ? `${formatCurrency(totalEstimate - perTripBudget)} over` : `${formatCurrency(perTripBudget - totalEstimate)} left`}
+                        </span>
+                      </div>
+                      <div className="h-1.5 rounded-full bg-slate-100 dark:bg-[#374151] overflow-hidden">
+                        <div className={cn('h-full rounded-full', totalEstimate / perTripBudget >= 1 ? 'bg-red-500' : totalEstimate / perTripBudget >= 0.8 ? 'bg-amber-500' : 'bg-emerald-500')} style={{ width: `${Math.min(100, (totalEstimate / perTripBudget) * 100)}%` }} />
+                      </div>
+                      <div className="flex justify-between mt-0.5 text-[10px] text-muted">
+                        <span>List: {formatCurrency(totalEstimate)}</span>
+                        <span>Per-trip: {formatCurrency(perTripBudget)}</span>
+                      </div>
+                    </div>
+                  )}
+                  {monthlyBudget === 0 && !(perTripBudget > 0 && totalEstimate > 0) && (
+                    <p className="text-xs text-muted">No budget configured.</p>
+                  )}
+                  {(preferences?.shoppingDay || daysUntilNextTrip !== null) && (
                     <div className="flex items-center gap-2 text-sm">
                       <Calendar className="h-4 w-4 text-muted shrink-0" />
                       <span>
                         {preferences?.shoppingDay && <strong className="capitalize">{preferences.shoppingDay}s</strong>}
                         {daysUntilNextTrip !== null && (
-                          <span className="text-muted"> &mdash; next trip in <strong className="text-foreground">{daysUntilNextTrip} day{daysUntilNextTrip !== 1 ? 's' : ''}</strong></span>
+                          <span className="text-muted"> — next trip in <strong className="text-foreground">{daysUntilNextTrip} day{daysUntilNextTrip !== 1 ? 's' : ''}</strong></span>
                         )}
                       </span>
                     </div>
+                  )}
+                  <div className="pt-1 border-t border-card-border">
+                    <button onClick={() => navigate('/settings')} className="text-xs text-primary hover:underline">Manage settings →</button>
                   </div>
-                )}
-
-                {/* Footer link */}
-                <div className="pt-1 border-t border-card-border">
-                  <button onClick={() => navigate('/settings')} className="text-xs text-primary hover:underline">
-                    Manage all shopping settings →
-                  </button>
                 </div>
-              </div>
-            </motion.div>
-          )}
-        </AnimatePresence>
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </div>
+
+        {/* Saved Stores card */}
+        <SavedStoresCard
+          savedStores={savedStores}
+          items={items}
+          onFindOtherStores={() => setShowStoreFinder(true)}
+          onStartShopping={(storeName) => startSessionMutation.mutate(storeName)}
+          onSave={(data) => api.getSavedStores().then(() => {})}
+          onUpdate={(id, data) => api.updateSavedStore(id, data).then(() => queryClient.invalidateQueries({ queryKey: ['savedStores'] }))}
+          onDelete={(id) => api.deleteSavedStore(id).then(() => queryClient.invalidateQueries({ queryKey: ['savedStores'] }))}
+          onAssign={(storeName, itemIds) => {
+            Promise.all(itemIds.map(id => api.updateShoppingItem(id, { assignedStore: storeName } as any))).then(() => queryClient.invalidateQueries({ queryKey: ['shoppingList'] }));
+          }}
+        />
       </div>
 
       {/* Search + Store filter */}
@@ -642,6 +550,7 @@ export default function ShoppingPage() {
                 onUpdate={(id, data) => updateItemMutation.mutate({ id, data })}
                 preferredStores={preferredStores}
                 showHeader={true}
+                onStartShopping={(s) => tryStartSession(s)}
               />
           ))}
         </div>
@@ -793,7 +702,7 @@ export default function ShoppingPage() {
       </Dialog>
 
       {/* Generate from Meals Dialog */}
-      <Dialog open={showGenerateFromMeals} onOpenChange={setShowGenerateFromMeals}>
+      <Dialog open={showGenerateFromMeals} onOpenChange={(o) => { setShowGenerateFromMeals(o); if (!o) setGenerateStore(''); }}>
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Generate from Meal Plan</DialogTitle>
@@ -803,13 +712,27 @@ export default function ShoppingPage() {
               This will analyze your upcoming meal plan and create a shopping list with all required ingredients,
               grouped by category with estimated prices.
             </p>
-            {/* T24: budget warning */}
+            <div>
+              <Label className="text-xs font-medium mb-1.5 block">Assign all generated items to store</Label>
+              <select
+                value={generateStore}
+                onChange={(e) => setGenerateStore(e.target.value)}
+                className="flex h-9 w-full rounded-xl border border-card-border dark:border-[#374151] bg-white dark:bg-[#283447] dark:text-[#F9FAFB] px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary"
+              >
+                <option value="">No store (unassigned)</option>
+                {savedStores.filter(s => s.isPreferred).map(s => (
+                  <option key={s.id} value={s.name}>{s.name}</option>
+                ))}
+                {savedStores.filter(s => !s.isPreferred).map(s => (
+                  <option key={s.id} value={s.name}>{s.name}</option>
+                ))}
+              </select>
+            </div>
             {perTripBudget > 0 && (
               <div className="flex items-start gap-2 rounded-xl bg-amber-50 border border-amber-200 px-3 py-2">
                 <AlertTriangle className="h-4 w-4 text-amber-600 mt-0.5 flex-shrink-0" />
                 <p className="text-xs text-amber-800">
                   Generated items will be priced against your <strong>{formatCurrency(perTripBudget)}</strong> per-trip budget.
-                  Items that push the list over budget will be highlighted.
                 </p>
               </div>
             )}
@@ -825,194 +748,193 @@ export default function ShoppingPage() {
         </DialogContent>
       </Dialog>
 
-      {/* Store Finder Dialog */}
-      <Dialog open={showStoreFinder} onOpenChange={(open) => { setShowStoreFinder(open); if (!open) setSelectedStoreIdx(null); }}>
+      {/* Find Other Stores Dialog */}
+      <Dialog open={showStoreFinder} onOpenChange={(open) => {
+        setShowStoreFinder(open);
+        if (!open) { setOtherStoreName(''); setOtherStoreResults([]); setOtherStoreAssignIds(new Set()); }
+      }}>
         <DialogContent className="max-w-lg max-h-[80vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle>Find Nearby Stores</DialogTitle>
+            <DialogTitle>Find Other Stores</DialogTitle>
           </DialogHeader>
           <div className="space-y-4 my-4">
-            <div className="flex gap-2">
-              <Input
-                placeholder="Enter ZIP code"
-                value={zipCode}
-                onChange={(e) => { setZipCode(e.target.value.replace(/\D/g, '').slice(0, 5)); setSelectedStoreIdx(null); }}
-                maxLength={5}
-                className="flex-1"
-              />
-              {storesFetching && <Loader2 className="h-5 w-5 animate-spin text-muted self-center" />}
-            </div>
-
-            {stores && stores.length > 0 && (
-              <>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <Label className="text-xs font-medium mb-1.5 block">Store name <span className="text-red-500">*</span></Label>
                 <Input
-                  placeholder="Search or enter store name..."
-                  value={storeSearch}
-                  onChange={(e) => setStoreSearch(e.target.value)}
-                  className="text-sm"
+                  placeholder="e.g. Whole Foods"
+                  value={otherStoreName}
+                  onChange={(e) => setOtherStoreName(e.target.value)}
                 />
-                <div className="space-y-2">
-                  {stores
-                    .filter((s: any) => !storeSearch || s.name.toLowerCase().includes(storeSearch.toLowerCase()))
-                    .map((store: any, idx: number) => {
-                      const realIdx = stores.indexOf(store);
-                      return (
-                  <div key={store.placeId || `${store.name}-${idx}`} className="rounded-xl border border-card-border overflow-hidden">
-                    <button
-                      onClick={() => setSelectedStoreIdx(selectedStoreIdx === realIdx ? null : realIdx)}
-                      className={cn(
-                        'w-full text-left p-3 transition-all',
-                        selectedStoreIdx === realIdx ? 'bg-primary/5 border-b border-card-border' : 'hover:bg-primary/5'
-                      )}
-                    >
-                      <div className="flex items-center justify-between">
-                        <div>
-                          <p className="text-sm font-medium">{store.name}</p>
-                          <p className="text-xs text-muted flex items-center gap-1 mt-0.5">
-                            <MapPin className="h-3 w-3" /> {store.address}
-                          </p>
-                          {store.distance && (
-                            <p className="text-[10px] text-muted mt-0.5">{store.distance} away</p>
-                          )}
+              </div>
+              <div>
+                <Label className="text-xs font-medium mb-1.5 block">Radius <span className="text-red-500">*</span></Label>
+                <select
+                  value={otherStoreRadius}
+                  onChange={(e) => setOtherStoreRadius(e.target.value)}
+                  className="flex h-9 w-full rounded-xl border border-card-border dark:border-[#374151] bg-white dark:bg-[#283447] dark:text-[#F9FAFB] px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary"
+                >
+                  {RADIUS_OPTIONS.map(r => <option key={r} value={r}>{r}</option>)}
+                </select>
+              </div>
+            </div>
+            <div>
+              <Label className="text-xs font-medium mb-1.5 block">City, state, or ZIP <span className="text-muted font-normal">(optional — uses your saved location)</span></Label>
+              <Input
+                placeholder="e.g. Nashville, TN or 37920"
+                value={otherStoreOrigin}
+                onChange={(e) => setOtherStoreOrigin(e.target.value)}
+              />
+            </div>
+            <Button
+              className="w-full"
+              disabled={!otherStoreName.trim() || otherStoreSearching}
+              onClick={async () => {
+                setOtherStoreSearching(true);
+                setOtherStoreResults([]);
+                try {
+                  const results = await api.findOtherStores({
+                    storeName: otherStoreName.trim(),
+                    radiusLabel: otherStoreRadius,
+                    originCityState: otherStoreOrigin.trim() || undefined,
+                    originZip: preferences?.zipCode || undefined,
+                  });
+                  setOtherStoreResults(results);
+                } catch (e: any) {
+                  toast('error', 'Search failed', e.message);
+                } finally {
+                  setOtherStoreSearching(false);
+                }
+              }}
+            >
+              {otherStoreSearching ? <><Loader2 className="h-4 w-4 animate-spin" /> Searching...</> : <><Search className="h-4 w-4" /> Search</>}
+            </Button>
+
+            {otherStoreResults.length > 0 && (
+              <div className="space-y-2">
+                <p className="text-xs text-muted font-medium">{otherStoreResults.length} result{otherStoreResults.length !== 1 ? 's' : ''}</p>
+                {otherStoreResults.map((store: any, idx: number) => {
+                  const alreadySaved = savedStores.some(s => s.name === store.name);
+                  const unassignedItems = items.filter((i: any) => !i.assignedStore);
+                  const isExpanded = otherStoreSelectedIdx === idx;
+                  return (
+                    <div key={store.placeId || idx} className="rounded-xl border border-card-border overflow-hidden">
+                      <div className="p-3 flex items-start justify-between gap-3">
+                        <div className="min-w-0 flex-1">
+                          <p className="text-sm font-medium truncate">{store.name}</p>
+                          {store.address && <p className="text-xs text-muted mt-0.5 flex items-center gap-1"><MapPin className="h-3 w-3 shrink-0" />{store.address}</p>}
+                          {store.distance && <p className="text-[10px] text-muted mt-0.5">{store.distance} away</p>}
                         </div>
-                        <div className="text-right shrink-0 ml-3">
-                          {store.estimatedTotal && (
-                            <p className="text-sm font-semibold text-primary">{formatCurrency(store.estimatedTotal)}</p>
+                        <div className="flex flex-col gap-1 shrink-0">
+                          {alreadySaved ? (
+                            <Badge variant="secondary" className="text-[10px]">Saved</Badge>
+                          ) : (
+                            <Button size="sm" variant="outline" className="text-xs h-7 px-2"
+                              onClick={async () => {
+                                await api.saveStore({ name: store.name, address: store.address, placeId: store.placeId, distance: store.distance, source: 'find_other' });
+                                queryClient.invalidateQueries({ queryKey: ['savedStores'] });
+                                toast('success', `${store.name} saved`);
+                              }}
+                            >
+                              <Star className="h-3 w-3 mr-1" /> Save
+                            </Button>
                           )}
-                          <p className="text-[10px] text-muted">est. total</p>
+                          {unassignedItems.length > 0 && (
+                            <Button size="sm" variant="outline" className="text-xs h-7 px-2"
+                              onClick={() => {
+                                setOtherStoreSelectedIdx(isExpanded ? null : idx);
+                                setOtherStoreAssignIds(new Set(unassignedItems.map((i: any) => i.id)));
+                              }}
+                            >
+                              Assign Items
+                            </Button>
+                          )}
                         </div>
                       </div>
-                    </button>
-
-                    {/* Expanded per-item cost breakdown */}
-                    <AnimatePresence>
-                      {selectedStoreIdx === idx && store.itemPrices && store.itemPrices.length > 0 && (
-                        <motion.div
-                          initial={{ height: 0, opacity: 0 }}
-                          animate={{ height: 'auto', opacity: 1 }}
-                          exit={{ height: 0, opacity: 0 }}
-                          className="overflow-hidden"
-                        >
-                          <div className="px-3 pb-3 space-y-1">
-                            <p className="text-[10px] uppercase tracking-wider font-semibold text-muted mb-1.5">
-                              Estimated Prices ({store.itemPrices.length} items)
-                            </p>
-                            {store.itemPrices.map((ip: any) => (
-                              <div key={ip.itemName} className="flex items-center justify-between text-xs py-1 border-b border-slate-100 last:border-0">
-                                <div className="flex-1 min-w-0">
-                                  <span className="truncate block">{ip.itemName}</span>
-                                  {ip.quantity > 1 && <span className="text-[10px] text-muted">x{ip.quantity}</span>}
-                                </div>
-                                <div className="flex items-center gap-2 shrink-0 ml-2">
-                                  <span className="font-mono">{formatCurrency(ip.subtotal || ip.unitPrice)}</span>
-                                  {ip.confidence === 'crowd_sourced' && (
-                                    <Badge variant="secondary" className="text-[8px] px-1 py-0">verified</Badge>
-                                  )}
-                                </div>
-                              </div>
+                      {isExpanded && unassignedItems.length > 0 && (
+                        <div className="border-t border-card-border px-3 pb-3 pt-2 space-y-2">
+                          <p className="text-xs font-medium text-muted">Select unassigned items to assign to {store.name}:</p>
+                          <div className="space-y-1 max-h-40 overflow-y-auto">
+                            {unassignedItems.map((item: any) => (
+                              <label key={item.id} className="flex items-center gap-2 text-sm cursor-pointer hover:bg-slate-50 dark:hover:bg-[#283447] rounded px-1 py-0.5">
+                                <input type="checkbox" checked={otherStoreAssignIds.has(item.id)} onChange={(e) => {
+                                  const next = new Set(otherStoreAssignIds);
+                                  e.target.checked ? next.add(item.id) : next.delete(item.id);
+                                  setOtherStoreAssignIds(next);
+                                }} className="rounded" />
+                                <span className="truncate">{item.itemName}</span>
+                              </label>
                             ))}
-                            <div className="flex items-center justify-between text-sm font-semibold pt-2 border-t border-slate-200">
-                              <span>Total</span>
-                              <span className="text-primary">{formatCurrency(store.estimatedTotal)}</span>
-                            </div>
-                            <Button
-                              className="w-full mt-2"
-                              size="sm"
-                              onClick={() => {
-                                setShowStoreFinder(false);
-                                setSelectedStoreIdx(null);
-                                tryStartSession(store.name, store.estimatedTotal);
-                              }}
-                              disabled={startSessionMutation.isPending}
-                            >
-                              {startSessionMutation.isPending
-                                ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                                : <><PlayCircle className="h-3.5 w-3.5" /> Start Shopping at {store.name}</>
-                              }
-                            </Button>
-                            {/* T70/T71: Kroger live pricing badge or fallback */}
-                            <div className="mt-2 pt-2 border-t border-slate-100">
-                              {isKrogerStore(store.name) ? (
-                                <div className="flex items-center gap-1.5 text-[11px] text-emerald-700">
-                                  <span className="inline-flex items-center gap-1 bg-emerald-50 border border-emerald-200 rounded-full px-2 py-0.5 font-medium">
-                                    <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 inline-block" />
-                                    Live pricing available
-                                  </span>
-                                  <span className="text-muted">via Kroger API</span>
-                                </div>
-                              ) : (
-                                <p className="text-[11px] text-muted italic">
-                                  Live pricing not available for this store.
-                                </p>
-                              )}
-                            </div>
-                            {/* Get Directions button (T27) */}
-                            {store.address && (
-                              <a
-                                href={getDirectionsUrl(store.address)}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="flex items-center justify-center gap-1.5 w-full mt-1.5 py-1.5 rounded-xl border border-card-border text-xs font-medium text-muted hover:bg-slate-50 transition-colors"
-                              >
-                                <Navigation className="h-3.5 w-3.5" /> Get Directions
-                              </a>
-                            )}
-                            {/* Report incorrect address (T64) */}
-                            {store.address && (
-                              <button
-                                onClick={() => {
-                                  setReportingStore({ name: store.name, address: store.address });
-                                  setReportCorrection('');
-                                  setReportNotes('');
-                                  setShowReportModal(true);
-                                }}
-                                className="flex items-center justify-center gap-1 w-full mt-1 py-1 text-[11px] text-muted/70 hover:text-muted transition-colors"
-                              >
-                                <Flag className="h-3 w-3" /> Report incorrect address
-                              </button>
-                            )}
                           </div>
-                        </motion.div>
+                          <Button size="sm" className="w-full text-xs"
+                            disabled={otherStoreAssignIds.size === 0}
+                            onClick={async () => {
+                              await Promise.all(Array.from(otherStoreAssignIds).map(id => api.updateShoppingItem(id, { assignedStore: store.name } as any)));
+                              queryClient.invalidateQueries({ queryKey: ['shoppingList'] });
+                              toast('success', `${otherStoreAssignIds.size} items assigned to ${store.name}`);
+                              setOtherStoreSelectedIdx(null);
+                            }}
+                          >
+                            Assign {otherStoreAssignIds.size} item{otherStoreAssignIds.size !== 1 ? 's' : ''}
+                          </Button>
+                        </div>
                       )}
-                    </AnimatePresence>
-                  </div>
-                      );
-                    })}
-
-                  {/* Custom store option if search doesn't match */}
-                  {storeSearch && !stores.some((s: any) => s.name.toLowerCase().includes(storeSearch.toLowerCase())) && (
-                    <div className="rounded-xl border border-dashed border-card-border p-3 space-y-2">
-                      <p className="text-sm text-muted">"{storeSearch}" not in list</p>
-                      <Input
-                        placeholder="Store address (optional, for future reference)"
-                        value={customStoreAddress}
-                        onChange={(e) => setCustomStoreAddress(e.target.value)}
-                        className="text-sm"
-                      />
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        className="w-full"
-                        onClick={() => {
-                          setShowStoreFinder(false);
-                          setSelectedStoreIdx(null);
-                          setCustomStoreAddress('');
-                          tryStartSession(storeSearch);
-                        }}
-                        disabled={startSessionMutation.isPending}
-                      >
-                        <PlayCircle className="h-3.5 w-3.5" /> Start Shopping at {storeSearch}
-                      </Button>
                     </div>
-                  )}
-                </div>
-              </>
+                  );
+                })}
+              </div>
             )}
-
-            {stores && stores.length === 0 && (
-              <p className="text-sm text-muted text-center py-4">No stores found near this ZIP code.</p>
+            {!otherStoreSearching && otherStoreResults.length === 0 && otherStoreName && (
+              <p className="text-sm text-muted text-center py-2">No results yet — hit Search to find stores.</p>
             )}
           </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Start Shopping Store Selector */}
+      <Dialog open={showStartShopping} onOpenChange={setShowStartShopping}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Start Shopping</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-2 my-4">
+            <p className="text-xs text-muted mb-3">Choose which store's items you want to shop for:</p>
+            {Object.entries(groupedByStore).sort(([a], [b]) => {
+              if (a === 'Unassigned') return 1;
+              if (b === 'Unassigned') return -1;
+              return a.localeCompare(b);
+            }).map(([storeName, storeItems]) => {
+              const est = storeItems.reduce((s: number, i: any) => s + (i.estimatedPrice || 0), 0);
+              return (
+                <button
+                  key={storeName}
+                  onClick={() => { setShowStartShopping(false); tryStartSession(storeName === 'Unassigned' ? undefined : storeName); }}
+                  className={cn(
+                    'w-full text-left rounded-xl border px-4 py-3 transition-all hover:border-primary hover:bg-primary/5',
+                    startShoppingStore === storeName ? 'border-primary bg-primary/10' : 'border-card-border'
+                  )}
+                >
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-sm font-medium">{storeName}</p>
+                      <p className="text-xs text-muted">{storeItems.length} item{storeItems.length !== 1 ? 's' : ''}</p>
+                    </div>
+                    {est > 0 && <span className="text-sm font-semibold text-primary">{formatCurrency(est)}</span>}
+                  </div>
+                </button>
+              );
+            })}
+            <button
+              onClick={() => { setShowStartShopping(false); tryStartSession(); }}
+              className="w-full text-left rounded-xl border border-dashed border-card-border px-4 py-3 hover:border-primary hover:bg-primary/5 transition-all"
+            >
+              <p className="text-sm font-medium">Shop all items</p>
+              <p className="text-xs text-muted">No store filter — show everything</p>
+            </button>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowStartShopping(false)}>Cancel</Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
 
@@ -1200,13 +1122,137 @@ export default function ShoppingPage() {
   );
 }
 
-function StoreGroup({ storeName, storeItems, onRemove, onUpdate, preferredStores, showHeader }: {
+function SavedStoresCard({ savedStores, items, onFindOtherStores, onStartShopping, onUpdate, onDelete, onAssign }: {
+  savedStores: SavedStore[];
+  items: any[];
+  onFindOtherStores: () => void;
+  onStartShopping: (storeName: string) => void;
+  onSave?: (data: any) => void;
+  onUpdate: (id: string, data: any) => Promise<void>;
+  onDelete: (id: string) => Promise<void>;
+  onAssign: (storeName: string, itemIds: string[]) => void;
+}) {
+  const [tab, setTab] = useState<'preferred' | 'other'>('preferred');
+  const [assigningStore, setAssigningStore] = useState<SavedStore | null>(null);
+  const [assignIds, setAssignIds] = useState<Set<string>>(new Set());
+  const unassigned = items.filter((i: any) => !i.assignedStore);
+  const preferred = savedStores.filter(s => s.isPreferred);
+  const other = savedStores.filter(s => !s.isPreferred);
+  const displayed = tab === 'preferred' ? preferred : other;
+  return (
+    <div className="rounded-2xl border border-card-border overflow-hidden">
+      <div className="flex items-center justify-between px-4 py-3 border-b border-card-border">
+        <div className="flex gap-1">
+          <button
+            onClick={() => setTab('preferred')}
+            className={cn('px-3 py-1 rounded-lg text-xs font-medium transition-all', tab === 'preferred' ? 'bg-primary text-white' : 'text-muted hover:text-foreground')}
+          >
+            Preferred Stores {preferred.length > 0 && `(${preferred.length})`}
+          </button>
+          <button
+            onClick={() => setTab('other')}
+            className={cn('px-3 py-1 rounded-lg text-xs font-medium transition-all', tab === 'other' ? 'bg-primary text-white' : 'text-muted hover:text-foreground')}
+          >
+            Other Nearby {other.length > 0 && `(${other.length})`}
+          </button>
+        </div>
+        <Button size="sm" variant="outline" className="h-7 text-xs" onClick={onFindOtherStores}>
+          <Search className="h-3 w-3 mr-1" /> Find Other Stores
+        </Button>
+      </div>
+      <div className="p-3">
+        {displayed.length === 0 ? (
+          <p className="text-xs text-muted text-center py-4">
+            {tab === 'preferred' ? 'No preferred stores saved. Use "Find Other Stores" to discover and save stores.' : 'No other nearby stores saved.'}
+          </p>
+        ) : (
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+            {displayed.map(store => (
+              <div key={store.id} className="rounded-xl border border-card-border p-3 space-y-2">
+                <div className="flex items-start justify-between gap-2">
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium truncate">{store.name}</p>
+                    {store.address && <p className="text-[11px] text-muted truncate">{store.address}</p>}
+                    {store.distance && <p className="text-[10px] text-muted">{store.distance} away</p>}
+                  </div>
+                  {store.isPreferred && <Star className="h-3.5 w-3.5 text-amber-400 shrink-0 mt-0.5" />}
+                </div>
+                <div className="flex flex-wrap gap-1">
+                  <button
+                    onClick={() => onUpdate(store.id, { isPreferred: !store.isPreferred })}
+                    className="flex items-center gap-1 text-[11px] text-muted hover:text-primary transition-colors"
+                    title={store.isPreferred ? 'Remove as preferred' : 'Set as preferred'}
+                  >
+                    {store.isPreferred ? <StarOff className="h-3 w-3" /> : <Star className="h-3 w-3" />}
+                    {store.isPreferred ? 'Unprefer' : 'Set Preferred'}
+                  </button>
+                  <button
+                    onClick={() => onStartShopping(store.name)}
+                    className="flex items-center gap-1 text-[11px] text-primary hover:text-primary/80 transition-colors font-medium"
+                  >
+                    <PlayCircle className="h-3 w-3" /> Shop Here
+                  </button>
+                  {unassigned.length > 0 && (
+                    <button
+                      onClick={() => { setAssigningStore(store); setAssignIds(new Set(unassigned.map((i: any) => i.id))); }}
+                      className="flex items-center gap-1 text-[11px] text-muted hover:text-foreground transition-colors"
+                    >
+                      <Package className="h-3 w-3" /> Assign Items
+                    </button>
+                  )}
+                  <button
+                    onClick={() => onDelete(store.id)}
+                    className="flex items-center gap-1 text-[11px] text-red-500 hover:text-red-600 transition-colors ml-auto"
+                  >
+                    <Trash2 className="h-3 w-3" /> Remove
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+      {/* Assign Items mini-modal */}
+      {assigningStore && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={() => setAssigningStore(null)}>
+          <div className="bg-white dark:bg-[#1E2A3B] rounded-2xl border border-card-border p-4 max-w-sm w-full mx-4 shadow-xl" onClick={(e) => e.stopPropagation()}>
+            <p className="text-sm font-medium mb-2">Assign unassigned items to {assigningStore.name}</p>
+            <div className="space-y-1 max-h-48 overflow-y-auto mb-3">
+              {unassigned.map((item: any) => (
+                <label key={item.id} className="flex items-center gap-2 text-sm cursor-pointer hover:bg-slate-50 dark:hover:bg-[#283447] rounded px-1 py-0.5">
+                  <input type="checkbox" checked={assignIds.has(item.id)} onChange={(e) => {
+                    const next = new Set(assignIds);
+                    e.target.checked ? next.add(item.id) : next.delete(item.id);
+                    setAssignIds(next);
+                  }} className="rounded" />
+                  <span className="truncate">{item.itemName}</span>
+                </label>
+              ))}
+            </div>
+            <div className="flex gap-2">
+              <Button variant="outline" size="sm" className="flex-1" onClick={() => setAssigningStore(null)}>Cancel</Button>
+              <Button size="sm" className="flex-1" disabled={assignIds.size === 0} onClick={() => {
+                onAssign(assigningStore!.name, Array.from(assignIds));
+                setAssigningStore(null);
+              }}>
+                Assign {assignIds.size}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function StoreGroup({ storeName, storeItems, onRemove, onUpdate, preferredStores, showHeader, onStartShopping }: {
   storeName: string;
   storeItems: any[];
   onRemove: (id: string) => void;
   onUpdate: (id: string, data: any) => void;
   preferredStores: string[];
   showHeader: boolean;
+  onStartShopping?: (storeName: string) => void;
 }) {
   const { toast } = useToast();
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -1344,20 +1390,30 @@ function StoreGroup({ storeName, storeItems, onRemove, onUpdate, preferredStores
             <span className="text-xs font-semibold uppercase tracking-wider text-muted">{storeName === 'Unassigned' ? 'No Store Assigned' : storeName}</span>
             <span className="text-[10px] text-muted bg-slate-100 dark:bg-[#283447] rounded-full px-2 py-0.5">{storeItems.length}</span>
           </div>
-          {/* Select All toggle */}
-          <button
-            onClick={toggleSelectAll}
-            className="flex items-center gap-1.5 text-[11px] text-muted hover:text-primary transition-colors font-medium"
-          >
-            <div className={cn(
-              'h-3.5 w-3.5 rounded-sm border-2 flex items-center justify-center transition-colors',
-              allSelected ? 'bg-primary border-primary' : someSelected ? 'bg-primary/30 border-primary' : 'border-current'
-            )}>
-              {allSelected && <Check className="h-2 w-2 text-white" />}
-              {someSelected && <span className="w-1.5 h-0.5 bg-primary rounded-full block" />}
-            </div>
-            Select all
-          </button>
+          <div className="flex items-center gap-2">
+            {storeName !== 'Unassigned' && onStartShopping && (
+              <button
+                onClick={() => onStartShopping(storeName)}
+                className="flex items-center gap-1 text-[11px] text-primary hover:text-primary/80 font-medium transition-colors"
+              >
+                <PlayCircle className="h-3.5 w-3.5" /> Start Shopping
+              </button>
+            )}
+            {/* Select All toggle */}
+            <button
+              onClick={toggleSelectAll}
+              className="flex items-center gap-1.5 text-[11px] text-muted hover:text-primary transition-colors font-medium"
+            >
+              <div className={cn(
+                'h-3.5 w-3.5 rounded-sm border-2 flex items-center justify-center transition-colors',
+                allSelected ? 'bg-primary border-primary' : someSelected ? 'bg-primary/30 border-primary' : 'border-current'
+              )}>
+                {allSelected && <Check className="h-2 w-2 text-white" />}
+                {someSelected && <span className="w-1.5 h-0.5 bg-primary rounded-full block" />}
+              </div>
+              Select all
+            </button>
+          </div>
         </div>
 
         {/* Row 2: action bar — only when items are selected */}

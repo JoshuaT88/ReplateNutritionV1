@@ -119,7 +119,7 @@ export async function deleteShoppingItem(userId: string, id: string) {
   await prisma.shoppingList.delete({ where: { id } });
 }
 
-export async function generateFromMealPlans(userId: string, profileIds: string[], days: number) {
+export async function generateFromMealPlans(userId: string, profileIds: string[], days: number, assignedStore?: string) {
   const startDate = new Date();
   const endDate = new Date();
   endDate.setDate(endDate.getDate() + days);
@@ -155,6 +155,7 @@ export async function generateFromMealPlans(userId: string, profileIds: string[]
         profileIds,
         priority,
         sourceRef: `Meal plan (${days} day${days > 1 ? 's' : ''})`,
+        assignedStore: assignedStore || null,
       },
     });
     created.push(saved);

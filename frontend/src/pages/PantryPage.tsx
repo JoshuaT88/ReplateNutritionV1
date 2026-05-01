@@ -1,14 +1,14 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Plus, Trash2, AlertTriangle, Package, RefreshCw, ShoppingCart } from 'lucide-react';
+import { Plus, Trash2, AlertTriangle, Package, RefreshCw, ShoppingCart, Store } from 'lucide-react';
 import { api } from '@/lib/api';
-import { PantryItem } from '@/types';
+import { PantryItem, SavedStore } from '@/types';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { Dialog, DialogContent } from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useToast } from '@/components/ui/toast';
 import { PageTutorial } from '@/components/shared/PageTutorial';
@@ -24,6 +24,8 @@ export default function PantryPage() {
   const [showAdd, setShowAdd] = useState(false);
   const [search, setSearch] = useState('');
   const [filterCategory, setFilterCategory] = useState('All');
+  const [addToListTarget, setAddToListTarget] = useState<PantryItem | 'all' | null>(null);
+  const [addToListStore, setAddToListStore] = useState<string>('');
   const [form, setForm] = useState({
     itemName: '', category: '', quantity: '', unit: '',
     expiresAt: '', notes: '', lowStockAlert: false,
@@ -32,6 +34,11 @@ export default function PantryPage() {
   const { data: items = [], isLoading } = useQuery<PantryItem[]>({
     queryKey: ['pantry'],
     queryFn: () => api.getPantryItems(),
+  });
+
+  const { data: savedStores = [] } = useQuery<SavedStore[]>({
+    queryKey: ['savedStores'],
+    queryFn: () => api.getSavedStores(),
   });
 
   const addMutation = useMutation({
@@ -68,20 +75,21 @@ export default function PantryPage() {
   });
 
   const addToShoppingListMutation = useMutation({
-    mutationFn: (item: PantryItem) => api.addShoppingItem({
+    mutationFn: ({ item, store }: { item: PantryItem; store?: string }) => api.addShoppingItem({
       itemName: item.itemName,
       category: item.category || undefined,
       quantity: item.quantity || undefined,
+      assignedStore: store || undefined,
     }),
     onSuccess: () => toast('success', 'Added to shopping list'),
     onError: (e: any) => toast('error', e.message),
   });
 
   const addAllToShoppingMutation = useMutation({
-    mutationFn: async () => {
+    mutationFn: async (store?: string) => {
       const toAdd = filtered.filter((i) => !i.isExpired);
       await Promise.all(toAdd.map((item) =>
-        api.addShoppingItem({ itemName: item.itemName, category: item.category || undefined, quantity: item.quantity || undefined })
+        api.addShoppingItem({ itemName: item.itemName, category: item.category || undefined, quantity: item.quantity || undefined, assignedStore: store || undefined })
       ));
       return toAdd.length;
     },
@@ -128,7 +136,7 @@ export default function PantryPage() {
           </div>
         </div>
         <div className="flex gap-1 shrink-0">
-          <Button size="sm" variant="ghost" title="Add to shopping list" onClick={() => addToShoppingListMutation.mutate(item)}>
+          <Button size="sm" variant="ghost" title="Add to shopping list" onClick={() => { setAddToListTarget(item); setAddToListStore(''); }}>
             <RefreshCw className="h-3.5 w-3.5" />
           </Button>
           <Button size="sm" variant="ghost" className="text-red-500 hover:text-red-600" onClick={() => deleteMutation.mutate(item.id)}>
@@ -155,7 +163,7 @@ export default function PantryPage() {
           {filtered.length > 0 && (
             <Button
               variant="outline"
-              onClick={() => addAllToShoppingMutation.mutate()}
+              onClick={() => { setAddToListTarget('all'); setAddToListStore(''); }}
               disabled={addAllToShoppingMutation.isPending}
             >
               {addAllToShoppingMutation.isPending
@@ -316,6 +324,53 @@ export default function PantryPage() {
               </Button>
             </div>
           </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* Add to Shopping List — Store Selector */}
+      <Dialog open={!!addToListTarget} onOpenChange={(o) => { if (!o) setAddToListTarget(null); }}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Store className="h-4 w-4" /> Assign to Store
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3 my-3">
+            <p className="text-sm text-muted">
+              {addToListTarget === 'all'
+                ? 'Add all pantry items to the shopping list. Choose a store (optional).'
+                : `Add "${(addToListTarget as PantryItem)?.itemName}" to the shopping list.`}
+            </p>
+            <div>
+              <Label className="text-xs font-medium mb-1.5 block">Assign to store</Label>
+              <select
+                value={addToListStore}
+                onChange={(e) => setAddToListStore(e.target.value)}
+                className="flex h-9 w-full rounded-xl border border-card-border dark:border-[#374151] bg-white dark:bg-[#283447] dark:text-[#F9FAFB] px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary"
+              >
+                <option value="">No store (unassigned)</option>
+                {savedStores.map(s => (
+                  <option key={s.id} value={s.name}>{s.name}{s.isPreferred ? ' ★' : ''}</option>
+                ))}
+              </select>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setAddToListTarget(null)}>Cancel</Button>
+            <Button
+              onClick={() => {
+                if (addToListTarget === 'all') {
+                  addAllToShoppingMutation.mutate(addToListStore || undefined);
+                } else if (addToListTarget) {
+                  addToShoppingListMutation.mutate({ item: addToListTarget as PantryItem, store: addToListStore || undefined });
+                }
+                setAddToListTarget(null);
+              }}
+              disabled={addToShoppingListMutation.isPending || addAllToShoppingMutation.isPending}
+            >
+              <ShoppingCart className="h-4 w-4 mr-1" /> Add to List
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
     </div>

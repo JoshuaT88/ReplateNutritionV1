@@ -41,6 +41,31 @@ export interface UserPreferences {
   shoppingDay: string | null;
   perTripBudgetAllocation: number | null;
   organizerRole: string | null;
+  city: string | null;
+  state: string | null;
+}
+
+// ============ Saved Stores ============
+export interface SavedStore {
+  id: string;
+  userId: string;
+  name: string;
+  address: string | null;
+  city: string | null;
+  state: string | null;
+  zipCode: string | null;
+  placeId: string | null;
+  lat: number | null;
+  lng: number | null;
+  taxRate: number | null;
+  distance: string | null;
+  isPreferred: boolean;
+  aisleData: Record<string, string> | null;
+  priceData: Record<string, number> | null;
+  lastVerified: string | null;
+  source: string;
+  createdAt: string;
+  updatedAt: string;
 }
 
 // ============ Data Export ============

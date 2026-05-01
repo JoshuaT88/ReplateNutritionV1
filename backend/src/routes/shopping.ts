@@ -1,7 +1,7 @@
 import { Router, Response, NextFunction } from 'express';
 import { authenticate, AuthRequest } from '../middleware/auth.js';
 import * as shoppingService from '../services/shopping.service.js';
-import { searchNearbyStores, searchStoresByName } from '../services/store.service.js';
+import { searchNearbyStores, searchStoresByName, searchStoresByNameAndLocation, searchPreferredStoresByCityState } from '../services/store.service.js';
 import { firstParam } from '../utils/http.js';
 import prisma from '../config/database.js';
 import { logActivity } from '../services/activity.service.js';
@@ -42,8 +42,8 @@ router.delete('/list/:id', async (req: AuthRequest, res: Response, next: NextFun
 
 router.post('/generate-from-meals', async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
-    const { profileIds, days } = req.body;
-    const items = await shoppingService.generateFromMealPlans(req.user!.userId, profileIds, days || 7);
+    const { profileIds, days, assignedStore } = req.body;
+    const items = await shoppingService.generateFromMealPlans(req.user!.userId, profileIds, days || 7, assignedStore);
     res.status(201).json(items);
   } catch (err) { next(err); }
 });
@@ -60,6 +60,94 @@ router.post('/find-stores', async (req: AuthRequest, res: Response, next: NextFu
     const { zipCode } = req.body;
     const stores = await shoppingService.findStores(req.user!.userId, zipCode);
     res.json(stores);
+  } catch (err) { next(err); }
+});
+
+// POST /shopping/find-other-stores — search stores by name + radius (no shopping list required)
+router.post('/find-other-stores', async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const { storeName, radiusLabel, originZip, originCityState } = req.body;
+    if (!storeName?.trim()) { res.status(400).json({ error: 'storeName is required' }); return; }
+    if (!radiusLabel) { res.status(400).json({ error: 'radiusLabel is required' }); return; }
+    // Fall back to user saved zip if no origin provided
+    let resolvedZip = originZip;
+    if (!resolvedZip && !originCityState) {
+      const prefs = await prisma.userPreferences.findUnique({ where: { userId: req.user!.userId } });
+      resolvedZip = prefs?.zipCode || undefined;
+    }
+    const results = await searchStoresByNameAndLocation({ storeName: storeName.trim(), radiusLabel, originZip: resolvedZip, originCityState });
+    res.json(results);
+  } catch (err) { next(err); }
+});
+
+// GET /shopping/saved-stores — list user's saved stores
+router.get('/saved-stores', async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const stores = await prisma.savedStore.findMany({
+      where: { userId: req.user!.userId },
+      orderBy: [{ isPreferred: 'desc' }, { name: 'asc' }],
+    });
+    res.json(stores);
+  } catch (err) { next(err); }
+});
+
+// POST /shopping/saved-stores — save a store
+router.post('/saved-stores', async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const { name, address, city, state, zipCode, placeId, lat, lng, distance, isPreferred, taxRate, source } = req.body;
+    if (!name?.trim()) { res.status(400).json({ error: 'name is required' }); return; }
+    const store = await prisma.savedStore.upsert({
+      where: { userId_name: { userId: req.user!.userId, name: name.trim() } },
+      create: {
+        userId: req.user!.userId,
+        name: name.trim(), address, city, state, zipCode, placeId,
+        lat: lat ?? null, lng: lng ?? null, distance: distance ?? null,
+        isPreferred: isPreferred ?? false,
+        taxRate: taxRate ?? null,
+        source: source ?? 'search',
+        lastVerified: new Date(),
+      },
+      update: {
+        address, city, state, zipCode, placeId,
+        lat: lat ?? undefined, lng: lng ?? undefined, distance: distance ?? undefined,
+        isPreferred: isPreferred ?? undefined,
+        taxRate: taxRate ?? undefined,
+        source: source ?? undefined,
+        lastVerified: new Date(),
+      },
+    });
+    res.status(201).json(store);
+  } catch (err) { next(err); }
+});
+
+// PATCH /shopping/saved-stores/:id — update a saved store (e.g. toggle preferred)
+router.patch('/saved-stores/:id', async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const id = firstParam(req.params.id)!;
+    const existing = await prisma.savedStore.findFirst({ where: { id, userId: req.user!.userId } });
+    if (!existing) { res.status(404).json({ error: 'Store not found' }); return; }
+    const { isPreferred, aisleData, priceData, taxRate } = req.body;
+    const store = await prisma.savedStore.update({
+      where: { id },
+      data: {
+        ...(isPreferred !== undefined && { isPreferred }),
+        ...(aisleData !== undefined && { aisleData }),
+        ...(priceData !== undefined && { priceData }),
+        ...(taxRate !== undefined && { taxRate }),
+      },
+    });
+    res.json(store);
+  } catch (err) { next(err); }
+});
+
+// DELETE /shopping/saved-stores/:id
+router.delete('/saved-stores/:id', async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const id = firstParam(req.params.id)!;
+    const existing = await prisma.savedStore.findFirst({ where: { id, userId: req.user!.userId } });
+    if (!existing) { res.status(404).json({ error: 'Store not found' }); return; }
+    await prisma.savedStore.delete({ where: { id } });
+    res.json({ success: true });
   } catch (err) { next(err); }
 });
 
@@ -257,6 +345,16 @@ router.get('/search-stores', async (req: AuthRequest, res: Response, next: NextF
     const q = firstParam(req.query.q as string | string[] | undefined) || '';
     if (!q.trim()) { res.json([]); return; }
     const results = await searchStoresByName(q.trim());
+    res.json(results ?? []);
+  } catch (err) { next(err); }
+});
+
+// POST /shopping/preferred-store-search — Settings-side store search (requires city/state/zip, optional store name scope)
+router.post('/preferred-store-search', async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const { cityStateZip, storeName } = req.body;
+    if (!cityStateZip?.trim()) { res.status(400).json({ error: 'cityStateZip is required' }); return; }
+    const results = await searchPreferredStoresByCityState({ cityStateZip: cityStateZip.trim(), storeName: storeName?.trim() });
     res.json(results ?? []);
   } catch (err) { next(err); }
 });

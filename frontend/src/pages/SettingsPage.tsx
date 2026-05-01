@@ -317,10 +317,7 @@ export default function SettingsPage() {
     setStoreSearching(true);
     setStoreSearched(false);
     try {
-      const isZip = /^\d{5}$/.test(storeSearch.trim());
-      const results = isZip
-        ? await api.findStoresByZip(storeSearch.trim())
-        : await api.searchPreferredStores(storeSearch.trim());
+      const results = await api.searchPreferredStores(storeSearch.trim(), undefined);
       setStoreResults(results ?? []);
     } catch (e: any) {
       setStoreResults([]);
@@ -638,6 +635,34 @@ export default function SettingsPage() {
                 }}
               />
             </SettingsRow>
+            <SettingsRow label="City" value={preferences?.city || 'Not set'}>
+              <Input
+                placeholder="e.g. Nashville"
+                defaultValue={preferences?.city || ''}
+                className="w-40"
+                onBlur={(e) => {
+                  if (e.target.value !== (preferences?.city || '')) {
+                    updatePreferencesMutation.mutate({ city: e.target.value });
+                  }
+                }}
+              />
+            </SettingsRow>
+            <SettingsRow label="State" value={preferences?.state || 'Not set'}>
+              <select
+                defaultValue={preferences?.state || ''}
+                className="flex h-9 w-40 rounded-xl border border-card-border dark:border-[#374151] bg-white dark:bg-[#283447] dark:text-[#F9FAFB] px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary"
+                onBlur={(e) => {
+                  if (e.target.value !== (preferences?.state || '')) {
+                    updatePreferencesMutation.mutate({ state: e.target.value });
+                  }
+                }}
+              >
+                <option value="">Select state</option>
+                {US_STATES.map((s) => (
+                  <option key={s.abbr} value={s.abbr}>{s.name}</option>
+                ))}
+              </select>
+            </SettingsRow>
             <SettingsRow label="Monthly Budget" value={preferences?.budget ? `$${preferences.budget}` : 'Not set'}>
               <div className="flex items-center gap-2">
                 <Input
@@ -762,7 +787,7 @@ export default function SettingsPage() {
               )}
               <div className="flex gap-2">
                 <Input
-                  placeholder="Search by store name or ZIP"
+                  placeholder="Enter city, state, or ZIP to search for stores"
                   value={storeSearch}
                   onChange={(e) => { setStoreSearch(e.target.value); setStoreSearched(false); }}
                   onKeyDown={(e) => e.key === 'Enter' && handleStoreSearch()}
@@ -772,6 +797,7 @@ export default function SettingsPage() {
                   {storeSearching ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Search'}
                 </Button>
               </div>
+              <p className="text-[11px] text-muted">Enter your city/state or ZIP to search for stores near you. Optionally filter by store name.</p>
               {storeResults.length > 0 && (
                 <div className="mt-2 rounded-xl border border-card-border dark:border-[#374151] overflow-hidden">
                   {storeResults.slice(0, 5).map((store, idx) => (
